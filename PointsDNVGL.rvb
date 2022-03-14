@@ -1,0 +1,72 @@
+Option Explicit
+'Script written by Krzysztof Kiec
+'Script version środa, 15 lipca 2020 09:25:02
+
+Call Main()
+Sub Main()
+	
+	'------- IDENTYFIKACJA ELEMENTÓW BELKOWYCH
+	
+	Dim arrEL 'tablica zawierająca ID wszystkich elementów skończonych (linii pomiędzy węzłami)
+	Dim i 'indykator pętli
+	
+	arrEL = Rhino.GetObjects("Zaznacz elementy belkowe", 4)
+	For i=0 To UBound(arrEL)
+		Call Rhino.Print("ID elementu belkowego nr: " & i & " / " & arrEL(i))
+	Next
+	
+	'------- DEFINIOWANIE PARAMETRÓW ELEMENTÓW SKOŃCZONYCH
+	
+	Dim arrDEL() 'dane elementów (l.p.początek (XYZ),koniec (XYZ))
+	Dim arrPEL 'początek elementu skończonego
+	Dim arrKEL 'koniec elementu skończonego
+	Dim arrTWP() 'tekstowe współrzędne początku elementu
+	Dim arrTWK() 'tekstowe współrzędne końca elementu
+
+	ReDim arrDEL(UBound(arrEL),2)
+	
+	For i=0 To UBound(arrEL)
+		
+		arrPEL = Rhino.CurveStartPoint(arrEL(i))
+		arrKEL = Rhino.CurveEndPoint(arrEL(i))
+		
+		ReDim Preserve arrTWP(i)
+		ReDim Preserve arrTWK(i)
+		
+		arrTWP(i) = Rhino.Pt2Str(arrPEL, 3, 1)
+		arrTWK(i) = Rhino.Pt2Str(arrKEL, 3, 1)
+		
+		arrDEL(i, 0) = i + 1
+		arrDEL(i, 1) = arrTWP(i)
+		arrDEL(i, 2) = arrTWK(i)
+
+		Call Rhino.Print("Element belkowy: " & arrDEL(i, 0) & " / " & arrDEL(i, 1) & " / " & arrDEL(i, 2))
+	
+	Next
+	
+	'------- TWORZENIE PLIKU MODELU OBLICZENIOWEGO
+	
+	Dim arrPT_STR() 'plik tekstowy ze strukturą
+	Dim intN 'numer wiersza w pliku
+
+	ReDim arrPT_STR(0)
+	arrPT_STR(0) = "L.p. " & "X1 " & "Y1 " & "Z1 " & "X2 " & "Y2 " & "Z2" 
+	
+	intN = 0
+	For i=0 To UBound(arrEL)
+		intN = intN + 1
+		ReDim Preserve arrPT_STR(UBound(arrPT_STR)+1)
+		arrPT_STR(UBound(arrPT_STR)) = arrDEL(i, 0) & " " & arrDEL(i, 1) & " " & arrDEL(i, 2)
+	Next
+		
+	'------- EKSPORT PLIKU TEKSTOWEGO
+	
+	Dim strNAZWA_B 'nazwa pliku z parametrami po wysokości bezwględnej
+	
+	strNAZWA_B = Rhino.SaveFileName("Zapisz plik parametrów", "Text Files (*.txt)|*.txt||", , "Model_belkowy")
+
+	If Not IsNull(strNAZWA_B) Then
+		Call Rhino.WriteTextFile(strNAZWA_B, arrPT_STR,, 1)
+	End If	
+	
+End Sub

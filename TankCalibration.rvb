@@ -1,0 +1,1770 @@
+Option Explicit
+
+'Script written by <Krzysztof Kiec>
+'Script version środa, 17 czerwca 2020 07:50:24
+
+Call Main()
+Sub Main()
+	
+	'------- WPROWADZENIE PKT PRZECIĘCIA OWRĘŻA/PP/PS, PRZECHYŁU I PRZEGŁĘBIENIA
+	
+	Dim arrPUW ' początek układu współrzędnych
+	arrPUW = Rhino.GetPoint("Podaj punkt przecięcia owręża/PP/PS")
+	
+	'------- SPRAWDZENIE CZY JEST SONDA
+	
+	Dim blnOdp1' Czy jest sonda? boolean
+	Dim strOdp1' Czy jest sonda? string
+	Dim blnOdpI1 'warunek zakończenia pętli
+	
+	Do While blnOdpI1 = 0
+		strOdp1 = Rhino.GetString("Czy w chcesz skalować wg wys. bezwględnej czy sondy? (b/s)")
+		If strOdp1 = "s" Then
+			blnOdp1 = 1
+			blnOdpI1 = 1
+		ElseIf strOdp1 = "b" Then
+			blnOdp1 = 0
+			blnOdpI1 = 1
+		Else
+			Call Rhino.Print("Niewłaściwy format odpowiedzi. Użyj b lub s.")
+			blnOdpI1 = 0
+		End If
+	Loop
+	
+	'------- ZAZNACZENIE ZBIORNIKA ORAZ LINII SONDY
+	
+	Dim arrZB 'tablica zawierająca ID wszystkich obiektów tworzących zbiornik
+	Dim i 'indykator pętli
+	Dim arrSO 'tablica zawierająca ID wszystkich obiektów tworzących sondę
+	
+	arrZB = Rhino.GetObjects("Zaznacz zbiornik", 8 + 16 + 32)
+	For i=0 To UBound(arrZB)
+		Call Rhino.Print("ID obiektu zbiornika nr: " & i & " / " & arrZB(i))
+	Next
+	
+	If blnOdp1 = 1 Then
+		arrSO = Rhino.GetObjects("Zaznacz linię sondy", 4)
+		For i=0 To UBound(arrSO)
+			Call Rhino.Print("ID obiektu sondy nr: " & i & " / " & arrSO(i))
+		Next
+	End If
+	
+	'------- PODANIE PROCENTOWEGO UDZIAŁU USZTYWNIEŃ W ZBIORNIKU
+	
+	Dim dblPRC 'procent usztywnień w zbiorniku
+	
+	dblPRC = Rhino.GetReal("Podaj procentowy udział usztywnień w zbiorniku (%)")
+	
+	'------- ZNALEZIENIE SKRAJNYCH WSPÓŁRZĘDNYCH ZBIORNIKA
+	
+	Call Rhino.EnableRedraw(0)
+	
+	Dim arrBBox
+	Dim arrX() 'tablica ze współrzędnymi x
+	Dim arrY() 'tablica ze współrzędnymi y
+	Dim arrZ() 'tablica ze współrzędnymi z
+	Dim dblX_min 'skrajny punkt zbiornika
+	Dim dblX_max 'skrajny punkt zbiornika
+	Dim dblY_min 'skrajny punkt zbiornika
+	Dim dblY_max 'skrajny punkt zbiornika
+	Dim dblZ_min 'skrajny punkt zbiornika
+	Dim dblZ_max 'skrajny punkt zbiornika
+	
+	arrBBox = Rhino.BoundingBox(arrZB)
+	
+	For i=0 To UBound(arrBBox)
+		ReDim Preserve arrX(i)
+		arrX(i) = arrBBox(i)(0)
+		Call Rhino.Print("Współrzędna x " & i & "-ego punktu bryły ograniczającej: " & arrX(i))
+	Next
+	
+	For i=0 To UBound(arrBBox)
+		ReDim Preserve arrY(i)
+		arrY(i) = arrBBox(i)(1)
+		Call Rhino.Print("Współrzędna y " & i & "-ego punktu bryły ograniczającej: " & arrY(i))
+	Next
+	
+	For i=0 To UBound(arrBBox)
+		ReDim Preserve arrZ(i)
+		arrZ(i) = arrBBox(i)(2)
+		Call Rhino.Print("Współrzędna z " & i & "-ego punktu bryły ograniczającej: " & arrZ(i))
+	Next
+	
+	dblX_min = Rhino.Min(arrX)
+	Call Rhino.Print("Minimalne x w zbiorniku: " & dblX_min)
+	
+	dblX_max = Rhino.Max(arrX)
+	Call Rhino.Print("Maksymalne x w zbiorniku: " & dblX_max)
+	
+	dblY_min = Rhino.Min(arrY)
+	Call Rhino.Print("Minimalne y w zbiorniku: " & dblY_min)
+	
+	dblY_max = Rhino.Max(arrY)
+	Call Rhino.Print("Maksymalne y w zbiorniku: " & dblY_max)
+	
+	dblZ_min = Rhino.Min(arrZ)
+	Call Rhino.Print("Minimalne z w zbiorniku: " & dblZ_min)
+	
+	dblZ_max = Rhino.Max(arrZ)
+	Call Rhino.Print("Maksymalne z w zbiorniku: " & dblZ_max)
+	
+	'------- TWORZENIE PŁASZCZYZN POPRZECZNYCH
+
+	Dim dblPoX 'podziałka zbiornika po x
+	Dim dblPPoX 'poprzednia podziałka po x
+	Dim strLPom 'linia pomocnicza ID
+	Dim arrPP_X() 'tablica powierzchni tnących poprzecznie
+	Dim strPP_X 'pomocnicza płaszczyzna do offsetu (w minimalnym x zbiornika)
+	Dim dblAX 'aktualna współrzędna x
+	Dim dblL ' długość zbiornika
+	Dim dblDAP 'długość aktualnego przedziału
+	Dim dblDPP 'długość poprzedniego przedziału
+	Dim dblSDDP 'sumaryczna długość dotychczasowych przedziałów
+	
+	Dim blnOdp2' Czy to jest ostatni przedział? boolean
+	Dim strOdp2' Czy to jest ostatni przedział? string
+	Dim blnOdpI2' warunek zakończenia pętli
+	
+	Dim arrPoX() 'tablica z odstępami wręgowymi dla poszczególnych płaszczyzn
+	Dim arrXCOP 'środek ciężkości ostatniej płaszczyzny tnącej
+	
+	blnOdp2 = 0
+	dblDPP = 0
+	dblSDDP = 0
+	
+	dblL = dblX_max - dblX_min
+	
+	'pierwszy przedział
+	
+	Do While blnOdpI2 = 0
+		strOdp2 = Rhino.GetString("Czy zadany przedział będzie ostatni? (t/n)")
+		If strOdp2 = "t" Then
+			blnOdp2 = 1
+			blnOdpI2 = 1
+
+			dblPoX = Rhino.GetReal("Podaj żądaną poprzeczną podziałkę zbiornika")
+			dblDAP = dblL
+			
+			strLPom = Rhino.AddLine(Array(dblX_min - dblPoX / 2, dblY_max + 500, dblZ_min - 500), Array(dblX_min - dblPoX / 2, dblY_min - 500, dblZ_min - 500))
+			strPP_X = Rhino.ExtrudeCurveStraight(strLPom, Array(dblX_min - dblPoX / 2, dblY_min, dblZ_min - 500), Array(dblX_min - dblPoX / 2, dblY_min, dblZ_max + 500))
+			Call Rhino.DeleteObject(strLPom)
+	
+			dblAX = 0
+			i = -1
+	
+			Do While dblAX < dblDAP - dblPoX / 2
+				i = i + 1
+				dblAX = dblAX + dblPoX
+				ReDim Preserve arrPP_X(i)
+				ReDim Preserve arrPoX(i)
+				arrPoX(i) = dblPoX
+				arrPP_X(i) = Rhino.OffsetSurface(strPP_X, dblAX)
+				Call Rhino.Print("ID powierzchni przecinającej według długości zbiornika nr: " & i & " / " & arrPP_X(i))
+			Loop	
+			
+			Call Rhino.DeleteObject(strPP_X)
+			
+		ElseIf strOdp2 = "n" Then
+			blnOdp2 = 0
+			blnOdpI2 = 1
+			
+			dblDAP = Rhino.GetReal("Podaj długość przedziału o jednakowym odstępie wręgowym (licząc od początku zbiornika)")
+			dblPoX = Rhino.GetReal("Podaj żądaną poprzeczną podziałkę zbiornika")
+			
+			dblSDDP = dblDAP
+		
+			strLPom = Rhino.AddLine(Array(dblX_min - dblPoX / 2, dblY_max + 500, dblZ_min - 500), Array(dblX_min - dblPoX / 2, dblY_min - 500, dblZ_min - 500))
+			strPP_X = Rhino.ExtrudeCurveStraight(strLPom, Array(dblX_min - dblPoX / 2, dblY_min, dblZ_min - 500), Array(dblX_min - dblPoX / 2, dblY_min, dblZ_max + 500))
+			Call Rhino.DeleteObject(strLPom)
+	
+			dblAX = 0
+			i = -1
+	
+			Do While dblAX <= dblDAP - dblPoX / 2
+				i = i + 1
+				dblAX = dblAX + dblPoX
+				ReDim Preserve arrPP_X(i)
+				ReDim Preserve arrPoX(i)
+				arrPoX(i) = dblPoX
+				arrPP_X(i) = Rhino.OffsetSurface(strPP_X, dblAX)
+				Call Rhino.Print("ID powierzchni przecinającej według długości zbiornika nr: " & i & " / " & arrPP_X(i))
+			Loop
+			
+			Call Rhino.DeleteObject(strPP_X)
+			
+		Else
+			Call Rhino.Print("Niewłaściwy format odpowiedzi. Użyj t lub n.")
+			blnOdp2 = 0
+			blnOdpI2 = 0
+		End If
+	Loop
+	
+	Call Rhino.DeleteObject(strPP_X)
+	
+	'każdy następny
+	
+	If blnOdp2 = 0 Then 
+		blnOdp2 = 0
+	
+		Do While blnOdp2 = 0
+			strOdp2 = Rhino.GetString("Czy zadany przedział będzie ostatni? (t/n)")
+			If strOdp2 = "t" Then
+				blnOdp2 = 1
+
+				dblDPP = dblDAP
+				dblDAP = dblL - dblSDDP
+				dblPPoX = dblPoX
+				dblPoX = Rhino.GetReal("Podaj żądaną poprzeczną podziałkę zbiornika")
+	
+				dblAX = 0
+	
+				strPP_X = Rhino.OffsetSurface(arrPP_X(UBound(arrPP_X)), dblPPox / 2 - dblPoX / 2)
+			
+				Do While dblAX < dblDAP - dblPoX / 2
+				
+					dblAX = dblAX + dblPoX
+					ReDim Preserve arrPP_X(UBound(arrPP_X)+1)
+					
+					ReDim Preserve arrPoX(UBound(arrPoX)+1)
+					arrPoX(UBound(arrPoX)) = dblPoX
+					
+					arrPP_X(UBound(arrPP_X)) = Rhino.OffsetSurface(strPP_X, dblAX)
+					Call Rhino.Print("ID powierzchni przecinającej według długości zbiornika nr: " & UBound(arrPP_X) & " / " & arrPP_X(UBound(arrPP_X)))
+				Loop	
+			
+				Call Rhino.DeleteObject(strPP_X)
+			
+			ElseIf strOdp2 = "n" Then
+				blnOdp2 = 0
+			
+				dblDPP = dblDAP
+				dblDAP = Rhino.GetReal("Podaj długość przedziału o jednakowym odstępie wręgowym (licząc od początku zbiornika)")
+				dblPPoX = dblPoX
+				dblPoX = Rhino.GetReal("Podaj żądaną poprzeczną podziałkę zbiornika")
+				dblSDDP = dblSDDP + dblDAP
+	
+				dblAX = 0
+	
+				strPP_X = Rhino.OffsetSurface(arrPP_X(UBound(arrPP_X)), dblPPox / 2 - dblPoX / 2)
+			
+				Do While dblAX <= dblDAP - dblPoX / 2
+				
+					dblAX = dblAX + dblPoX
+					ReDim Preserve arrPP_X(UBound(arrPP_X)+1)
+					
+					ReDim Preserve arrPoX(UBound(arrPoX)+1)
+					arrPoX(UBound(arrPoX)) = dblPoX
+					
+					arrPP_X(UBound(arrPP_X)) = Rhino.OffsetSurface(strPP_X, dblAX)
+					Call Rhino.Print("ID powierzchni przecinającej według długości zbiornika nr: " & UBound(arrPP_X) & " / " & arrPP_X(UBound(arrPP_X)))
+				Loop		
+			
+				Call Rhino.DeleteObject(strPP_X)
+			
+			Else
+				Call Rhino.Print("Niewłaściwy format odpowiedzi. Użyj t lub n.")
+				blnOdp2 = 0
+				blnOdpI2 = 0
+			End If
+		Loop
+	End If
+	
+	arrXCOP = Rhino.SurfaceAreaCentroid(arrPP_X(UBound(arrPP_X)))
+	arrPoX(UBound(arrPoX)) = arrPoX(UBound(arrPoX)) / 2 + dblX_max - arrXCOP(0)(0)
+	
+	'------- TWORZENIE PRZECIĘĆ Z PŁASZCZYZNAMI POPRZECZNYMI
+
+	Dim arrTKX() 'tablica konturów uzyskanych z poprzecznych przecięć (jako warstwy)
+	Dim intN ' indykator pętli
+	Dim j 'indykator pętli
+	
+	Dim arrAP 'tablica z aktualnym przecięciem i-tego elementu zbiornika z N-tym przekrojem
+	Dim arrAPP 'tablica z połączonymi przecięciami (po komendzie JoinCurves)
+	Dim arrAK 'tablica z aktualnym konturem
+	Dim arrBIPom() 'tablica pomocnicza do przecięć
+	Dim arrBIPomU() 'tablica pomocnicza do przecięc uporządkowana tj. bez zerowych elementów
+	Dim strZP 'zmienna pomocnicza
+	Dim blnCKJZ ' czy krzywa jest zamknięta? boolean
+	
+	ReDim Preserve arrTKX(0)
+	
+	intN = -1
+	
+	Do While UBound(arrTKX) < UBound(arrPP_X)
+		intN = intN + 1
+		ReDim Preserve arrTKX(intN)
+		arrTKX(intN) = Rhino.AddLayer("TKX " & intN)
+		Call Rhino.CurrentLayer(arrTKX(intN))
+		
+		For i=0 To UBound(arrZB)
+			arrAP = Rhino.IntersectBreps(arrZB(i), arrPP_X(intN))
+			If  IsArray(arrAP) Then
+				arrAPP = Rhino.JoinCurves(arrAP, 1)
+				ReDim Preserve arrBIPom(i)
+				arrBIPom(i) = arrAPP(0)
+				Call Rhino.Print("ID obiektu przecięcia elemntu nr: " & i & " z przekrojem nr: " & intN & " liczonym wzdłużnie / " & arrBIPom(i))
+			End If
+			ReDim arrAP(50)
+			ReDim arrAPP(50)
+		Next
+		
+		ReDim arrBIPomU(0)
+		j = 0
+		For i=0 To UBound(arrBIPom)
+			strZP = arrBIPom(i)
+			If VarType(strZP) = vbString Then
+				ReDim Preserve arrBIPomU(j)
+				arrBIPomU(j) = arrBIPom(i)
+				j = j + 1
+			End If
+		Next
+		
+		arrAK = Rhino.JoinCurves(arrBIpomU, 1, 1)
+		If Not IsNull(arrAK) Then
+			For i=0 To UBound(arrAK)
+				Call Rhino.Print("ID konturu liczonego wzdłużnie nr: " & intN & " / " & arrAK(i)) 
+				blnCKJZ = Rhino.IsCurveClosed(arrAK(i))
+				If blnCKJZ = 0 Then
+					Call Rhino.CloseCurve(arrAK(i), 2)	
+				End If
+			Next
+		End If
+		ReDim arrAK(50)
+		
+	Loop
+	
+	Call Rhino.DeleteObject(strPP_X)
+	Call Rhino.DeleteObjects(arrPP_X)
+	
+	'------- PRZECHYLENIE I PRZEGŁĘBIENIE ZBIORNIKA I SONDY
+	
+	Dim dblPRZECH 'przechył w stopniach
+	Dim dblPRZEG_MM 'przegłębienie w mm
+	Dim dblLPP 'odległość między pionami
+	Dim arrPRZEG 'przegłębienie jako kąt (dwie linie i punkt) w stopniach
+	Dim arrAOZM 'aktualny obiekt zbiornika modelowego
+	
+	dblPRZECH = Rhino.GetReal("Podaj przechył w stopniach (LB znak - , PB znak + ")
+	dblPRZEG_MM = Rhino.GetReal("Podaj przegłębienie w mm (na rufę znak - , na dziób znak + , jako różnicę zanurzeń PR i PD")
+	dblLPP = 2 * arrPUW(0)
+	dblPRZECH = -dblPRZECH
+	
+	Call Rhino.EnableRedraw(0)
+	
+	' rzeczywisty zbiornik i sonda
+
+	Call Rhino.Print("Przechył w stopniach: " & dblPRZECH)
+	
+	arrPRZEG = Rhino.Angle(arrPUW, Array(dblL, 0, dblPRZEG_MM))
+	Call Rhino.Print("Przegłębienie w stopniach: " & arrPRZEG(1))
+	
+	arrZB = Rhino.RotateObjects(arrZB, arrPUW, dblPRZECH, Array(1, 0, 0), 0)
+	arrZB = Rhino.RotateObjects(arrZB, arrPUW, arrPRZEG(1), Array(0, 1, 0), 0)
+	
+	If blnOdp1 = 1 Then
+		arrSO = Rhino.RotateObjects(arrSO, arrPUW, dblPRZECH, Array(1, 0, 0), 0)
+		arrSO = Rhino.RotateObjects(arrSO, arrPUW, arrPRZEG(1), Array(0, 1, 0), 0)
+	End If
+	
+	For i=0 To UBound(arrZB)
+		Call Rhino.Print("ID obróconego obiektu zbiornika nr: " & i & " / " & arrZB(i))
+	Next
+	
+	If blnOdp1 = 1 Then
+		For i=0 To UBound(arrSO)
+			Call Rhino.Print("ID obróconego obiektu sondy nr: " & i & " / " & arrSO(i))
+		Next
+	End If
+	
+	' modelowy zbiornik
+	
+	For i=0 To UBound(arrTKX)
+		arrAOZM = Rhino.ObjectsByLayer(arrTKX(i))
+		arrZB = Rhino.RotateObjects(arrAOZM, arrPUW, dblPRZECH, Array(1, 0, 0), 0)
+		arrZB = Rhino.RotateObjects(arrAOZM, arrPUW, arrPRZEG(1), Array(0, 1, 0), 0)
+		Call Rhino.Print("ID obrócono obiekty zbiornika z warstwy nr: " & i)
+	Next
+
+	'------- ZNALEZIENIE SKRAJNYCH WSPÓŁRZĘDNYCH ZBIORNIKA PZRECHYLONEGO I PRZEGŁĘBIONEGO (MODEL OBLICZENIOWY)
+	
+	Dim arrX_min() 'tablica ze skrajnymi punktami przedziałów zbiornika modelowego
+	Dim arrX_max() 'tablica ze skrajnymi punktami przedziałów zbiornika modelowego
+	Dim arrY_min() 'tablica ze skrajnymi punktami przedziałów zbiornika modelowego
+	Dim arrY_max() 'tablica ze skrajnymi punktami przedziałów zbiornika modelowego
+	Dim arrZ_min() 'tablica ze skrajnymi punktami przedziałów zbiornika modelowego
+	Dim arrZ_max() 'tablica ze skrajnymi punktami przedziałów zbiornika modelowego
+	
+	For intN=0 To UBound(arrTKX)
+	
+		arrZB = Rhino.ObjectsByLayer(arrTKX(intN))
+		arrBBox = Rhino.BoundingBox(arrZB)
+		ReDim arrX(0)
+		ReDim arrY(0)
+		ReDim arrZ(0)
+	
+		For i=0 To UBound(arrBBox)
+			ReDim Preserve arrX(i)
+			arrX(i) = arrBBox(i)(0)
+			Call Rhino.Print("Współrzędna x " & i & "-ego punktu bryły ograniczającej: " & arrX(i))
+		Next
+	
+		For i=0 To UBound(arrBBox)
+			ReDim Preserve arrY(i)
+			arrY(i) = arrBBox(i)(1)
+			Call Rhino.Print("Współrzędna y " & i & "-ego punktu bryły ograniczającej: " & arrY(i))
+		Next
+	
+		For i=0 To UBound(arrBBox)
+			ReDim Preserve arrZ(i)
+			arrZ(i) = arrBBox(i)(2)
+			Call Rhino.Print("Współrzędna z " & i & "-ego punktu bryły ograniczającej: " & arrZ(i))
+		Next
+		
+		ReDim Preserve arrX_min(intN)
+		arrX_min(intN) = Rhino.Min(arrX)
+		Call Rhino.Print("Minimalne x w " & intN & "-ym przedziale zbiornika: " & arrX_min(intN))
+	
+		ReDim Preserve arrX_max(intN)
+		arrX_max(intN) = Rhino.Max(arrX)
+		Call Rhino.Print("Maksymalne x w " & intN & "-ym przedziale zbiornika: " & arrX_max(intN))
+	
+		ReDim Preserve arrY_min(intN)
+		arrY_min(intN) = Rhino.Min(arrY)
+		Call Rhino.Print("Minimalne y w " & intN & "-ym przedziale zbiornika: " & arrY_min(intN))
+	
+		ReDim Preserve arrY_max(intN)
+		arrY_max(intN) = Rhino.Max(arrY)
+		Call Rhino.Print("Maksymalne y w " & intN & "-ym przedziale zbiornika: " & arrY_max(intN))
+	
+		ReDim Preserve arrZ_min(intN)
+		arrZ_min(intN) = Rhino.Min(arrZ)
+		Call Rhino.Print("Minimalne z w " & intN & "-ym przedziale zbiornika: " & arrZ_min(intN))
+	
+		ReDim Preserve arrZ_max(intN)
+		arrZ_max(intN) = Rhino.Max(arrZ)
+		Call Rhino.Print("Maksymalne z w " & intN & "-ym przedziale zbiornika: " & arrZ_max(intN))
+	
+	Next
+	
+	dblX_min = Rhino.Min(arrX_min)
+	Call Rhino.Print("Minimalne x w zbiorniku: " & dblX_min)
+	
+	dblX_max = Rhino.Max(arrX_max)
+	Call Rhino.Print("Maksymalne x w zbiorniku: " & dblX_max)
+	
+	dblY_min = Rhino.Min(arrY_min)
+	Call Rhino.Print("Minimalne y w zbiorniku: " & dblY_min)
+	
+	dblY_max = Rhino.Max(arrY_max)
+	Call Rhino.Print("Maksymalne y w zbiorniku: " & dblY_max)
+	
+	dblZ_min = Rhino.Min(arrZ_min)
+	Call Rhino.Print("Minimalne z w zbiorniku: " & dblZ_min)
+	
+	dblZ_max = Rhino.Max(arrZ_max)
+	Call Rhino.Print("Maksymalne z w zbiorniku: " & dblZ_max)
+	
+	'------- ZAPYTANIE O MAKSYMALNĄ MOŻLIWĄ LICZBĘ KONTURÓW UZYSKANYCH PŁASZCZYZNĄ TNĄCĄ
+	
+	Dim intMLK 'maksymalna liczba konturów uzyskanych z przecięcia płaszczyznami wodnicowymi (chodzi o zarezerwowanie pamięci)
+
+	intMLK = 4
+	
+	'------- TWORZENIE PŁASZCZYZN PO WYSOKOŚCI BEZWZGLĘDNEJ
+	
+	Dim dblPoZ 'podziałka zbiornika wg wysokości bezwględnej
+	Dim arrPPWB() 'tablica powierzchni tnących po wysokościach bezwględnych
+	Dim dblAZ' aktualna współrzędna "z" powierzchni przecinającej
+	Dim arrAZ_B()' tablica ze współrzędnymi "z" dla powierzchni zamykającej, po wysokości bezwględnej
+	Dim dblH 'wysokość zbiornika po współrzędnej "z"
+	Dim strPPWB_Pom 'pomocnicza płaszczyzna do offsetu (w najniższej współrzędnej)
+	Dim strPPWB 'warstwa z płaszczyznami po wysokości bezwględnej
+	
+	If blnOdp1 = 0 Then
+	
+		strPPWB = Rhino.AddLayer("PPWB")
+		Call Rhino.CurrentLayer(strPPWB)
+	
+		strLPom = Rhino.AddLine(Array(dblX_min - 500, dblY_min - 500, dblZ_min), Array(dblX_min - 500, dblY_max + 500, dblZ_min))
+	
+		ReDim arrPPWB(0)
+		ReDim arrAZ_B(0)
+		strPPWB_Pom = Rhino.ExtrudeCurveStraight(strLPom, Array(dblX_min - 500, dblY_min - 500, dblZ_min), Array(dblX_max + 500, dblY_min - 500, dblZ_min))
+		Call Rhino.DeleteObject(strLPom)
+	
+		dblPoZ = Rhino.GetReal("Podaj żądaną podziałkę zbiornika po wysokości bezwzględnej")
+	
+		dblAZ = 0
+		dblH = dblZ_max - dblZ_min
+		Call Rhino.Print("Wysokość zbiornika w kierunku z: " & dblH)
+	
+		i = -1
+	
+		Do While dblAZ < (dblH - dblPoZ - 1)
+			i = i + 1
+			dblAZ = dblAZ + dblPoZ
+			ReDim Preserve arrAZ_B(i)
+			arrAZ_B(i) = dblAZ
+			ReDim Preserve arrPPWB(i)
+			arrPPWB(i) = Rhino.OffsetSurface(strPPWB_Pom, dblAZ)
+			Call Rhino.Print("ID powierzchni przecinającej według wysokości bezwzględnej nr: " & i & " / " & arrPPWB(i))
+		Loop
+	
+		Call Rhino.DeleteObject(strPPWB_Pom)
+	End If
+	
+	'------- PODZIAŁ SONDY NA RÓWNE ODCINKI I ZNALEZIENIE NAJNIŻSZEGO PUNKTU SONDY
+	
+	If blnOdp1 = 1 Then
+	
+		Dim dblPoS' podziałka sondy
+		Dim arrPPS' punkty podziału sondy
+		Dim arrSOP' sonda jako połączona krzywa
+		Dim arrSZ()' współrzędne "z" punktów sondy podzielonych według zadanej podziałki
+		Dim dblSL' wynik na sondzie (długościowy)
+		Dim arrSL()' tablica z wynikami na sondzie (długościowymi)
+		Dim arrSZ_WZ()'współrzędne "z" punktów sondy względem najniższego punktu zbiornika
+	
+		arrSOP = Rhino.JoinCurves(arrSO, 1)
+		Call Rhino.Print("ID połączonej sondy: " & arrSOP(0))
+		dblPoS = Rhino.GetReal("Podaj żądaną podziałkę sondy")
+	
+		arrPPS = Rhino.DivideCurveEquidistant(arrSOP(0), dblPos)
+		dblSL = 0
+		
+		For i=0 To UBound(arrPPS)
+			ReDim Preserve arrSZ(i)
+			arrSZ(i) = arrPPS(i)(2)
+			ReDim Preserve arrSL(i)
+			arrSL(i) = dblSL
+			ReDim Preserve arrSZ_WZ(i)
+			arrSZ_WZ(i) = arrSZ(i) - dblZ_min
+			dblSL = dblSL + dblPoS
+			Call Rhino.Print("Współrzędna z " & i & "-ego punktu sondy: " & arrSZ(i))
+		Next
+	End If
+	
+	'------- TWORZENIE PŁASZCZYZN WG SONDY
+	
+	Dim strPPWS 'warstwa z płaszczyznami według sondy
+	
+	If blnOdp1 = 1 Then
+
+		strPPWS = Rhino.AddLayer("PPWS")
+		Call Rhino.CurrentLayer(strPPWS)
+	
+		Dim arrPPWS() 'płaszczyzny pomocnicze według sondy
+		Dim strPPWS_Pom 'pomocnicza płaszczyzna do offsetu (w najniższej współrzędnej)
+	
+		strLPom = Rhino.AddLine(Array(dblX_min - 500, dblY_min - 500, arrSZ(0)), Array(dblX_min - 500, dblY_max + 500, arrSZ(0)))
+		ReDim arrPPWS(0)
+		strPPWS_Pom = Rhino.ExtrudeCurveStraight(strLPom, Array(dblX_min - 500, dblY_min - 500, arrSZ(0)), Array(dblX_max + 500, dblY_min - 500, arrSZ(0)))
+		Call Rhino.DeleteObject(strLPom)
+	
+		i = 0
+		ReDim Preserve arrPPWS(i)
+		arrPPWS(i) = strPPWS_Pom
+		Call Rhino.Print("ID powierzchni przecinającej według sondy, nr: " & i & " / " & arrPPWS(i))
+	
+		dblAZ = 0
+	
+		For i=1 To UBound(arrSZ)
+			dblAZ = arrSZ(i) - arrSZ(0)
+			ReDim Preserve arrPPWS(i)
+			arrPPWS(i) = Rhino.OffsetSurface(strPPWS_Pom, dblAZ)
+			Call Rhino.Print("ID powierzchni przecinającej według sondy, nr: " & i & " / " & arrPPWS(i))
+		Next
+	End If
+	
+	'------- TWORZENIE DODATKOWYCH PŁASZCZYZN WG SONDY (W CELU UZYSKANIA WYNIKOWU W ZERZE SONDY
+	
+	Dim strPPWSD 'warstwa z płaszczyznami dodatkowymi dla sondy
+	
+	If blnOdp1 = 1 Then
+
+		strPPWSD = Rhino.AddLayer("PPWSD")
+		Call Rhino.CurrentLayer(strPPWSD)
+		
+		Dim arrPPWSD() ' dodatkowe płaszczyzny pomocnicze według sondy
+	
+		i = 0
+		ReDim Preserve arrPPWSD(i)
+		arrPPWSD(i) = strPPWS_Pom
+		Call Rhino.Print("ID dodatkowej powierzchni przecinającej według sondy, nr: " & i & " / " & arrPPWSD(i))
+	
+		dblAZ = 0
+		dblH = arrSZ(0) - dblZ_min
+		i = 0
+		
+		Do While dblAZ < dblH - dblPoS - 1
+			i = i + 1	
+			dblAZ = dblAZ + dblPoS
+			ReDim Preserve arrPPWSD(i)
+			arrPPWSD(i) = Rhino.OffsetSurface(strPPWS_Pom, -dblAZ)
+			Call Rhino.Print("ID dodatkowej powierzchni przecinającej według sondy, nr: " & i & " / " & arrPPWSD(i))
+		Loop
+	End If
+		
+	'------- PRZECIĘCIA PO WYSOKOŚCI BEZWZGLĘDNEJ
+	
+	Dim intM 'indykator pętli
+	Dim strTKB 'tablica konturów uzyskanych licząc po wysokości bezwględnej (jako warstwy)
+	Dim arrPKT_B()'tablica punktów uzyskanych z przecięć
+	Dim arrPKT 'tablica z aktualnymi współrzędnymi punktu
+	Dim arrPKT_BW() 'tablica punktów uzyskanych z przecięć jako współrzędne
+	Dim arrTAP() 'tablica aktualnych przecięć (dynamiczna)
+	Dim k ' indykator pętli
+	
+	If blnOdp1 = 0 Then
+	
+		ReDim arrPKT_B(UBound(arrTKX),UBound(arrPPWB),(2*intMLK-1))
+		ReDim arrPKT_BW(UBound(arrTKX),UBound(arrPPWB),(2*intMLK-1),2)
+		
+		intM = -1
+	
+		strTKB = Rhino.AddLayer("TKB")
+		Call Rhino.CurrentLayer(strTKB)
+
+		Do While intM < UBound(arrTKX) 
+			intM = intM + 1
+
+			arrZB = Rhino.ObjectsByLayer(arrTKX(intM))
+		
+			intN = -1
+		
+			Do While intN < UBound(arrPPWB)
+				intN = intN + 1
+				ReDim arrTAP(0)
+				k = -1
+				
+				For i=0 To UBound(arrZB)
+					arrAP = Rhino.CurveBrepIntersect(arrZB(i), arrPPWB(intN))
+					If IsArray(arrAP) Then
+						For j=0 To UBound(arrAP)
+							If VarType(arrAP(j)) = vbString Then
+								k = k + 1
+								ReDim Preserve arrTAP(k)
+								arrTAP(k) = arrAP(j)
+							End If
+						Next
+					End If
+				Next
+			
+				If IsArray(arrAP) Then
+					
+					For i=0 To UBound(arrTAP)
+						arrPKT_B(intM, intN, i) = arrTAP(i)
+						If VarType(arrPKT_B(intM, intN, i)) = vbString Then 'uzyskiwanie współrzędnych
+							arrPKT = Rhino.PointCoordinates(arrPKT_B(intM, intN, i))
+							If IsArray(arrPKT) Then
+								arrPKT_BW(intM, intN, i, 0) = arrPKT(0)
+								arrPKT_BW(intM, intN, i, 1) = arrPKT(1)
+								arrPKT_BW(intM, intN, i, 2) = arrPKT(2)
+								Call Rhino.Print("Punkt: " & intM & " " & intN & " " & i & " / " & arrPKT(0) & " " & arrPKT(1) & " " & arrPKT(2))
+							End If		
+						End If
+					Next
+					
+					If UBound(arrAP) = 0 Then
+						Call Rhino.Print("Nieparzysta liczba przecięć konturu: " & intM & " z płaszczyzną: " & intN)
+						Call Rhino.EnableRedraw(1)
+						Exit Sub
+					ElseIf UBound(arrAP) = 2 Then
+						Call Rhino.Print("Nieparzysta liczba przecięć konturu: " & intM & " z płaszczyzną: " & intN) 
+						Call Rhino.EnableRedraw(1)
+						Exit Sub
+					ElseIf UBound(arrAP) = 4 Then
+						Call Rhino.Print("Nieparzysta liczba przecięć konturu: " & intM & " z płaszczyzną: " & intN)
+						Call Rhino.EnableRedraw(1)
+						Exit Sub
+					ElseIf UBound(arrAP) = 6 Then
+						Call Rhino.Print("Nieparzysta liczba przecięć konturu: " & intM & " z płaszczyzną: " & intN)
+						Call Rhino.EnableRedraw(1)
+						Exit Sub
+					End If
+				End If
+				ReDim arrAP(50)	
+			Loop
+		
+			Call Rhino.Print("Wyznaczono punkty przecięcia konturów wg wysokości bezwględnej z " & intN & " płaszczyznami, w " & intM & " przedziale")
+	
+		Loop
+	End If
+	
+	'------- PRZECIĘCIA PO WYSOKOŚCI SONDY
+	
+	Dim arrPKT_S() 'tablica z punktami przecięć według sondy
+	Dim strTKS 'punkty zbiornika wg sondy (jako warstwa)
+	Dim arrPKT_SW() 'tablica punktów uzyskanych z przecięć jako współrzędne
+	
+	If blnOdp1 = 1 Then
+	
+		ReDim arrPKT_S(UBound(arrTKX),UBound(arrPPWS),(2*intMLK-1))
+		ReDim arrPKT_SW(UBound(arrTKX),UBound(arrPPWS),(2*intMLK-1),2)
+
+		intM = -1
+	
+		strTKS = Rhino.AddLayer("TKS")
+		Call Rhino.CurrentLayer(strTKS)
+
+		Do While intM < UBound(arrTKX) 
+			intM = intM + 1
+
+			arrZB = Rhino.ObjectsByLayer(arrTKX(intM))
+		
+			intN = -1
+		
+			Do While intN < UBound(arrPPWS)
+				intN = intN + 1
+				ReDim arrTAP(0)
+				k = -1
+
+				For i=0 To UBound(arrZB)
+					arrAP = Rhino.CurveBrepIntersect(arrZB(i), arrPPWS(intN))
+					If IsArray(arrAP) Then
+						For j=0 To UBound(arrAP)
+							If VarType(arrAP(j)) = vbString Then
+								k = k + 1
+								ReDim Preserve arrTAP(k)
+								arrTAP(k) = arrAP(j)
+							End If
+						Next
+					End If
+				Next
+			
+				If IsArray(arrAP) Then
+					For i=0 To UBound(arrTAP)
+						arrPKT_S(intM, intN, i) = arrTAP(i)
+						If VarType(arrPKT_S(intM, intN, i)) = vbString Then 'uzyskiwanie współrzędnych
+							arrPKT = Rhino.PointCoordinates(arrPKT_S(intM, intN, i))
+							If IsArray(arrPKT) Then
+								arrPKT_SW(intM, intN, i, 0) = arrPKT(0)
+								arrPKT_SW(intM, intN, i, 1) = arrPKT(1)
+								arrPKT_SW(intM, intN, i, 2) = arrPKT(2)
+								Call Rhino.Print("Punkt: " & intM & " " & intN & " " & i & " / " & arrPKT(0) & " " & arrPKT(1) & " " & arrPKT(2))
+							End If		
+						End If
+						
+					Next
+					If UBound(arrAP) = 0 Then
+						Call Rhino.Print("Nieparzysta liczba przecięć konturu: " & intM & " z płaszczyzną: " & intN)
+						Call Rhino.EnableRedraw(1)
+						Exit Sub
+					ElseIf UBound(arrAP) = 2 Then
+						Call Rhino.Print("Nieparzysta liczba przecięć konturu: " & intM & " z płaszczyzną: " & intN) 
+						Call Rhino.EnableRedraw(1)
+						Exit Sub
+					ElseIf UBound(arrAP) = 4 Then
+						Call Rhino.Print("Nieparzysta liczba przecięć konturu: " & intM & " z płaszczyzną: " & intN)
+						Call Rhino.EnableRedraw(1)
+						Exit Sub
+					ElseIf UBound(arrAP) = 6 Then
+						Call Rhino.Print("Nieparzysta liczba przecięć konturu: " & intM & " z płaszczyzną: " & intN)
+						Call Rhino.EnableRedraw(1)
+						Exit Sub
+					End If
+				End If
+				ReDim arrAP(50)	
+			Loop
+		
+			Call Rhino.Print("Wyznaczono punkty przecięcia konturów wg wysokości sondy " & intN & " płaszczyznami, w " & intM & " przedziale")
+	
+		Loop
+	End If
+	
+	'------- DODATKOWE PRZECIĘCIA PO WYSOKOŚCI SONDY (DLA WYZNACZENIA WYNIKU W ZERZE SONDY)
+	
+	Dim arrPKT_SD() 'tablica z dodatkowymi punktami przecięć według sondy
+	Dim strTKSD 'dodatkowe punkty zbiornika wg sondy (jako warstwa)
+	Dim arrPKT_SDW() 'tablica dodatkowych punktów uzyskanych z przecięć jako współrzędne
+	
+	If blnOdp1 = 1 Then
+	
+		ReDim arrPKT_SD(UBound(arrTKX),UBound(arrPPWSD),(2*intMLK-1))
+		ReDim arrPKT_SDW(UBound(arrTKX),UBound(arrPPWSD),(2*intMLK-1),2)
+
+		intM = -1
+	
+		strTKSD = Rhino.AddLayer("TKSD")
+		Call Rhino.CurrentLayer(strTKSD)
+
+		Do While intM < UBound(arrTKX) 
+			intM = intM + 1
+
+			arrZB = Rhino.ObjectsByLayer(arrTKX(intM))
+		
+			intN = -1
+		
+			Do While intN < UBound(arrPPWSD)
+				intN = intN + 1
+				ReDim arrTAP(0)
+				k = -1
+
+				For i=0 To UBound(arrZB)
+					arrAP = Rhino.CurveBrepIntersect(arrZB(i), arrPPWSD(intN))
+					If IsArray(arrAP) Then
+						For j=0 To UBound(arrAP)
+							If VarType(arrAP(j)) = vbString Then
+								k = k + 1
+								ReDim Preserve arrTAP(k)
+								arrTAP(k) = arrAP(j)
+							End If
+						Next
+					End If
+				Next
+			
+				If IsArray(arrAP) Then
+					For i=0 To UBound(arrTAP)
+						arrPKT_SD(intM, intN, i) = arrTAP(i)
+						If VarType(arrPKT_SD(intM, intN, i)) = vbString Then 'uzyskiwanie współrzędnych
+							arrPKT = Rhino.PointCoordinates(arrPKT_SD(intM, intN, i))
+							If IsArray(arrPKT) Then
+								arrPKT_SDW(intM, intN, i, 0) = arrPKT(0)
+								arrPKT_SDW(intM, intN, i, 1) = arrPKT(1)
+								arrPKT_SDW(intM, intN, i, 2) = arrPKT(2)
+								Call Rhino.Print("Punkt: " & intM & " " & intN & " " & i & " / " & arrPKT(0) & " " & arrPKT(1) & " " & arrPKT(2))
+							End If		
+						End If
+						
+					Next
+					If UBound(arrAP) = 0 Then
+						Call Rhino.Print("Nieparzysta liczba przecięć konturu: " & intM & " z płaszczyzną: " & intN)
+						Call Rhino.EnableRedraw(1)
+						Exit Sub
+					ElseIf UBound(arrAP) = 2 Then
+						Call Rhino.Print("Nieparzysta liczba przecięć konturu: " & intM & " z płaszczyzną: " & intN) 
+						Call Rhino.EnableRedraw(1)
+						Exit Sub
+					ElseIf UBound(arrAP) = 4 Then
+						Call Rhino.Print("Nieparzysta liczba przecięć konturu: " & intM & " z płaszczyzną: " & intN)
+						Call Rhino.EnableRedraw(1)
+						Exit Sub
+					ElseIf UBound(arrAP) = 6 Then
+						Call Rhino.Print("Nieparzysta liczba przecięć konturu: " & intM & " z płaszczyzną: " & intN)
+						Call Rhino.EnableRedraw(1)
+						Exit Sub
+					End If
+				End If
+				ReDim arrAP(50)	
+			Loop
+		
+			Call Rhino.Print("Wyznaczono dodatkowe punkty przecięcia konturów wg wysokości sondy " & intN & " płaszczyznami, w " & intM & " przedziale")
+	
+		Loop
+	End If
+	
+	'------- OBLICZENIA WEDŁUG WYSOKOŚCI BEZWGLĘDNEJ
+	
+	Dim arrDL_B() 'tablica z długościami linii dla dodatkowych płaszczyzn po wysokości bezwględnej
+	Dim arrSCL_B() 'środek ciężkości linii dla dotakowych płaszczyzn po wysokości bezwględnej
+	
+	If blnOdp1 = 0 Then
+		ReDim arrDL_B(UBound(arrPPWB),UBound(arrTKX))
+		ReDim arrSCL_B(UBound(arrPPWB),UBound(arrTKX),2)
+	End If
+		
+	'obliczenie łącznych długości linii
+
+	If blnOdp1 = 0 Then
+		intN = -1		
+		Do While intN < UBound(arrPPWB)
+			intN = intN + 1
+			intM = -1
+			Do While intM < UBound(arrTKX) 
+				intM = intM + 1
+				If VarType(arrPKT_B(intM, intN, 1)) = vbString Then
+					arrDL_B(intN, intM) = Abs(arrPKT_BW(intM, intN, 1, 1) - arrPKT_BW(intM, intN, 0, 1))
+				End If
+				If VarType(arrPKT_B(intM, intN, 3)) = vbString Then
+					arrDL_B(intN, intM) = arrDL_B(intN, intM) + Abs(arrPKT_BW(intM, intN, 3, 1) - arrPKT_BW(intM, intN, 2, 1))	
+				End If
+				If VarType(arrPKT_B(intM, intN, 5)) = vbString Then
+					arrDL_B(intN, intM) = arrDL_B(intN, intM) + Abs(arrPKT_B(intM, intN, 5, 1) - arrPKT_B(intM, intN, 4, 1))	
+				End If
+				If VarType(arrPKT_B(intM, intN, 7)) = vbString Then
+					arrDL_B(intN, intM) = arrDL_B(intN, intM) + Abs(arrPKT_BW(intM, intN, 7, 1) - arrPKT_BW(intM, intN, 6, 1))	
+				End If
+				Call Rhino.Print("Długość linii w przedziale: " & intM & " " & intN & " / " & arrDL_B(intN, intM))
+			Loop
+		Loop
+	End If
+	
+	'	obliczenie środka ciężkości sumy linii WPROWADZENIE ZMIENNYCH POMOCNICZYCH
+	
+	Dim XC0 
+	Dim XC1
+	Dim XC2
+	Dim XC3
+	Dim XC4
+	Dim XC5
+	Dim XC6
+	Dim XC7
+	Dim YC0
+	Dim YC1
+	Dim YC2
+	Dim YC3
+	Dim YC4
+	Dim YC5
+	Dim YC6
+	Dim YC7
+	Dim ZC0
+	Dim ZC1
+	Dim ZC2
+	Dim ZC3
+	Dim ZC4
+	Dim ZC5
+	Dim ZC6
+	Dim ZC7
+	Dim L01
+	Dim L23
+	Dim L45
+	Dim L67
+	
+	'Koniec wprowadzanie zmiennych pomocniczych
+	
+	If blnOdp1 = 0 Then
+		intN = -1		
+		Do While intN < UBound(arrPPWB)
+			intN = intN + 1
+			intM = -1
+			Do While intM < UBound(arrTKX) 
+				intM = intM + 1
+				If VarType(arrPKT_B(intM, intN, 1)) = vbString Then
+					XC0 = arrPKT_BW(intM, intN, 0, 0)
+					XC1 = arrPKT_BW(intM, intN, 1, 0)
+					YC0 = arrPKT_BW(intM, intN, 0, 1)
+					YC1 = arrPKT_BW(intM, intN, 1, 1)
+					ZC0 = arrPKT_BW(intM, intN, 0, 2)
+					ZC1 = arrPKT_BW(intM, intN, 1, 2)
+					arrSCL_B(intN, intM, 0) = (XC0 + XC1) / 2
+					arrSCL_B(intN, intM, 1) = (YC0 + YC1) / 2
+					arrSCL_B(intN, intM, 2) = (ZC0 + ZC1) / 2
+				End If
+				If VarType(arrPKT_B(intM, intN, 3)) = vbString Then
+					XC2 = arrPKT_BW(intM, intN, 2, 0)
+					XC3 = arrPKT_BW(intM, intN, 3, 0)
+					YC2 = arrPKT_BW(intM, intN, 2, 1)
+					YC3 = arrPKT_BW(intM, intN, 3, 1)
+					ZC2 = arrPKT_BW(intM, intN, 2, 2)
+					ZC3 = arrPKT_BW(intM, intN, 3, 2)	
+					L01 = Abs(YC1 - YC0)
+					L23 = Abs(YC3 - YC2)
+					arrSCL_B(intN, intM, 0) = (((XC0 + XC1) / 2) * L01 + ((XC2 + XC3) / 2) * L23) / (L01 + L23)
+					arrSCL_B(intN, intM, 1) = (((YC0 + YC1) / 2) * L01 + ((YC2 + YC3) / 2) * L23) / (L01 + L23)
+					arrSCL_B(intN, intM, 2) = (((ZC0 + ZC1) / 2) * L01 + ((ZC2 + ZC3) / 2) * L23) / (L01 + L23)
+				End If
+				If VarType(arrPKT_B(intM, intN, 5)) = vbString Then
+					XC4 = arrPKT_BW(intM, intN, 4, 0)
+					XC5 = arrPKT_BW(intM, intN, 5, 0)
+					YC4 = arrPKT_BW(intM, intN, 4, 1)
+					YC5 = arrPKT_BW(intM, intN, 5, 1)
+					ZC4 = arrPKT_BW(intM, intN, 4, 2)
+					ZC5 = arrPKT_BW(intM, intN, 5, 2)		
+					L45 = Abs(YC5 - YC4)
+					arrSCL_B(intN, intM, 0) = (((XC0 + XC1) / 2) * L01 + ((XC2 + XC3) / 2) * L23 + ((XC4 + XC5) / 2) * L45) / (L01 + L23 + L45)
+					arrSCL_B(intN, intM, 1) = (((YC0 + YC1) / 2) * L01 + ((YC2 + YC3) / 2) * L23 + ((YC4 + YC5) / 2) * L45) / (L01 + L23 + L45)
+					arrSCL_B(intN, intM, 2) = (((ZC0 + ZC1) / 2) * L01 + ((ZC2 + ZC3) / 2) * L23 + ((ZC4 + ZC5) / 2) * L45) / (L01 + L23 + L45)
+				End If
+				If VarType(arrPKT_B(intM, intN, 7)) = vbString Then
+					XC6 = arrPKT_BW(intM, intN, 6, 0)
+					XC7 = arrPKT_BW(intM, intN, 7, 0)
+					YC6 = arrPKT_BW(intM, intN, 6, 1)
+					YC7 = arrPKT_BW(intM, intN, 7, 1)
+					ZC6 = arrPKT_BW(intM, intN, 6, 2)
+					ZC7 = arrPKT_BW(intM, intN, 7, 2)		
+					L67 = Abs(YC7 - YC6)
+					arrSCL_B(intN, intM, 0) = (((XC0 + XC1) / 2) * L01 + ((XC2 + XC3) / 2) * L23 + ((XC4 + XC5) / 2) * L45 + ((XC6 + XC7) / 2) * L67) / (L01 + L23 + L45 + L67)
+					arrSCL_B(intN, intM, 1) = (((YC0 + YC1) / 2) * L01 + ((YC2 + YC3) / 2) * L23 + ((YC4 + YC5) / 2) * L45 + ((YC6 + YC7) / 2) * L67) / (L01 + L23 + L45 + L67)
+					arrSCL_B(intN, intM, 2) = (((ZC0 + ZC1) / 2) * L01 + ((ZC2 + ZC3) / 2) * L23 + ((ZC4 + ZC5) / 2) * L45 + ((ZC6 + ZC7) / 2) * L67) / (L01 + L23 + L45 + L67)
+				End If
+				If VarType(arrPKT_B(intM, intN, 1)) = vbString Then
+					Call Rhino.Print("Środek ciężkości linii w przedziale: " & intM & " " & intN & " / " & arrSCL_B(intN, intM, 0) & " " & arrSCL_B(intN, intM, 1) & " " & arrSCL_B(intN, intM, 2))
+				End If
+			Loop
+		Loop
+	End If
+	
+	'obliczenia fizycznych wielkości w przedziałach DEFINICJA ZMIENNYCH
+	
+	Dim dblVi 'objętość i-tego przedziału (intN, intM)
+	Dim dblV 'objętość ograniczona przez daną wodnicę
+	Dim arrV() 'tablica z wynikami objętości
+	Dim dblXCi 'współrzędna x środka ciężkości i-tego przedziału (intN, intM)
+	Dim dblXC 'współrzędna x środka ciężkości obszaru ograniczonego przez wodnicę
+	Dim dblYCi  'współrzędna y środka ciężkości i-tego przedziału (intN, intM)
+	Dim dblYC 'współrzędna y środka ciężkości obszaru ograniczonego przez wodnicę
+	Dim dblZCi  'współrzędna z środka ciężkości i-tego przedziału (intN, intM)
+	Dim dblZC 'współrzędna z środka ciężkości obszaru ograniczonego przez wodnicę
+	Dim arrWSC() 'tablica ze współrzędnymi środka ciężkości objętości dla poszczególnych wodnic
+	Dim dblA 'powierzchnia wodnicy
+	Dim dblAi 'powierzchnia wodnicy w i-tym przedziale (intN, intM)
+	Dim arrA() 'tablica z powierzchniami wodnic
+	Dim dblAXCi 'współrzędna x środka ciężkości wodnicy i-tego przedziału (intN, intM)
+	Dim dblAXC 'współrzędna x środka ciężkości wodnicy
+	Dim dblAYCi  'współrzędna y środka ciężkości wodnicy i-tego przedziału (intN, intM)
+	Dim dblAYC 'współrzędna y środka ciężkości wodnicy
+	Dim dblAZCi  'współrzędna z środka ciężkości wodnicy i-tego przedziału (intN, intM)
+	Dim dblAZC 'współrzędna z środka ciężkości wodnicy
+	Dim arrWSCW() ' tablica z współrzędnymi środka ciężkości dla poszczególnych wodnich
+	Dim dblIXi 'moment bezwładności powierzchni wodnicy w przedziale względem osi przechodzących przez środek ciężkości wodnicy
+	Dim dblIX 'suma momentów bezwładności
+	Dim dblIYi 'moment bezwładności powierzchni wodnicy w przedziale względem osi przechodzących przez środek ciężkości wodnicy
+	Dim dblIY 'suma momentów bezwładności
+	Dim arrIX()'tablica z momentami bezwłądności dla poszczególnych wodnic
+	Dim arrIY()'tablica z momentami bezwłądności dla poszczególnych wodnic
+	
+	If blnOdp1 = 0 Then
+		ReDim arrV(UBound(arrPPWB))
+		ReDim arrWSC(UBound(arrPPWB),2)
+		ReDim arrA(UBound(arrPPWB))
+		ReDim arrWSCW(UBound(arrPPWB),2)
+		ReDim arrIX(UBound(arrPPWB))
+		ReDim arrIY(UBound(arrPPWB))
+	End If
+		
+	'pierwszy przedział intN=0
+	
+	If blnOdp1 = 0 Then
+		dblV = 0
+		dblXC = 0
+		dblYC = 0
+		dblZC = 0
+		dblA = 0
+		dblAXCi = 0
+		dblAYCi = 0
+		dblAZCi = 0
+		intM = -1
+		Do While intM < UBound(arrTKX) 
+			intM = intM + 1
+			If VarType(arrPKT_B(intM, 0, 1)) = vbString Then
+				dblVi = (arrDL_B(0, intM)) * (dblPoZ / 2) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+				dblXCi = arrSCL_B(0, intM, 0)
+				dblYCi = arrSCL_B(0, intM, 1)
+				dblZCi = arrSCL_B(0, intM, 2) - dblPoZ / 4
+				dblXC = (dblXC * dblV + dblXCi * dblVi) / (dblV + dblVi)
+				dblYC = (dblYC * dblV + dblYCi * dblVi) / (dblV + dblVi)
+				dblZC = (dblZC * dblV + dblZCi * dblVi) / (dblV + dblVi)
+				dblV = dblV + dblVi
+				dblAi = (arrDL_B(0, intM)) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+				dblAXCi = arrSCL_B(0, intM, 0)
+				dblAYCi = arrSCL_B(0, intM, 1)
+				dblAZCi = arrSCL_B(0, intM, 2)
+				dblAXC = (dblAXC * dblA + dblAXCi * dblAi) / (dblA + dblAi)
+				dblAYC = (dblAYC * dblA + dblAYCi * dblAi) / (dblA + dblAi)
+				dblAZC = (dblAZC * dblA + dblAZCi * dblAi) / (dblA + dblAi)
+				dblA = dblA + dblAi
+			End If
+		Loop
+		intN = 0	
+		arrA(intN) = dblA
+		arrV(intN) = dblV
+		Call Rhino.Print("Obliczono objętosć w przedziale: " & intN & " " & arrV(intN))
+		Call Rhino.Print("Obliczono powierzchnię wodnicy w przedziale: " & intN & " " & arrA(intN))
+		arrWSC(intN, 0) = dblXC
+		arrWSC(intN, 1) = dblYC
+		arrWSC(intN, 2) = dblZC
+		Call Rhino.Print("Obliczono współrzędne środka ciężkości płynu w przedziale: " & intN & " " & arrWSC(intN, 0) & " " & arrWSC(intN, 1) & " " & arrWSC(intN, 2))
+		arrWSCW(intN, 0) = dblAXC
+		arrWSCW(intN, 1) = dblAYC
+		arrWSCW(intN, 2) = dblAZC
+		Call Rhino.Print("Obliczono współrzędne środka ciężkości wodnicy w przedziale: " & intN & " " & arrWSCW(intN, 0) & " " & arrWSCW(intN, 1) & " " & arrWSCW(intN, 2))	
+	End If
+	
+	'przedziały od intN=1 do końca
+	
+	If blnOdp1 = 0 Then
+		intN = 0		
+		Do While intN < UBound(arrPPWB)
+			intN = intN + 1
+			intM = -1
+			dblA = 0
+			Do While intM < UBound(arrTKX) 
+				intM = intM + 1
+				If VarType(arrPKT_B(intM, intN, 1)) = vbString Then
+					If VarType(arrPKT_B(intM, intN - 1, 1)) = vbString Then
+						dblVi = (arrDL_B(intN, intM)) * abs(arrSCL_B(intN, intM, 2) - arrSCL_B(intN - 1, intM, 2)) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+						dblXCi = (arrSCL_B(intN, intM, 0) + arrSCL_B(intN - 1, intM, 0)) / 2
+						dblYCi = (arrSCL_B(intN, intM, 1) + arrSCL_B(intN - 1, intM, 1)) / 2
+						dblZCi = (arrSCL_B(intN, intM, 2) + arrSCL_B(intN - 1, intM, 2)) / 2
+						dblXC = (dblXC * dblV + dblXCi * dblVi) / (dblV + dblVi)
+						dblYC = (dblYC * dblV + dblYCi * dblVi) / (dblV + dblVi)
+						dblZC = (dblZC * dblV + dblZCi * dblVi) / (dblV + dblVi)
+						dblV = dblV + dblVi
+					
+						dblAi = (arrDL_B(intN, intM)) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+						dblAXCi = arrSCL_B(intN, intM, 0)
+						dblAYCi = arrSCL_B(intN, intM, 1)
+						dblAZCi = arrSCL_B(intN, intM, 2)
+						dblAXC = (dblAXC * dblA + dblAXCi * dblAi) / (dblA + dblAi)
+						dblAYC = (dblAYC * dblA + dblAYCi * dblAi) / (dblA + dblAi)
+						dblAZC = (dblAZC * dblA + dblAZCi * dblAi) / (dblA + dblAi)
+						dblA = dblA + dblAi
+					End If
+				End If
+			Loop
+			arrA(intN) = dblA
+			arrV(intN) = dblV - (dblPRC / 100) * dblV
+			Call Rhino.Print("Obliczono objętosć w przedziale: " & intN & " " & arrV(intN))
+			Call Rhino.Print("Obliczono powierzchnię wodnicy w przedziale: " & intN & " " & arrA(intN))
+			arrWSC(intN, 0) = dblXC
+			arrWSC(intN, 1) = dblYC
+			arrWSC(intN, 2) = dblZC
+			Call Rhino.Print("Obliczono współrzędne środka ciężkości płynu w przedziale: " & intN & " " & arrWSC(intN, 0) & " " & arrWSC(intN, 1) & " " & arrWSC(intN, 2))
+			arrWSCW(intN, 0) = dblAXC
+			arrWSCW(intN, 1) = dblAYC
+			arrWSCW(intN, 2) = dblAZC
+			Call Rhino.Print("Obliczono współrzędne środka ciężkości wodnicy w przedziale: " & intN & " " & arrWSCW(intN, 0) & " " & arrWSCW(intN, 1) & " " & arrWSCW(intN, 2))
+		Loop
+	End If
+	
+	'momenty bezwładności wodnic
+	
+	If blnOdp1 = 0 Then
+		intN = -1		
+		Do While intN < UBound(arrPPWB)
+			intN = intN + 1
+			dblIX = 0
+			dblIY = 0
+			intM = -1
+			Do While intM < UBound(arrTKX) 
+				intM = intM + 1
+				dblIXi = 0
+				dblIYi = 0
+				If VarType(arrPKT_B(intM, intN, 1)) = vbString Then
+					XC0 = arrPKT_BW(intM, intN, 0, 0)
+					XC1 = arrPKT_BW(intM, intN, 1, 0)
+					YC0 = arrPKT_BW(intM, intN, 0, 1)
+					YC1 = arrPKT_BW(intM, intN, 1, 1)
+					ZC0 = arrPKT_BW(intM, intN, 0, 2)
+					ZC1 = arrPKT_BW(intM, intN, 1, 2)
+					L01 = Abs(YC1 - YC0)
+					dblIXi = (((YC0 + (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)'trzeba podzielić na odcinki w celu redukcji błędu obliczeniowego
+					dblIXi = dblIXi + (((YC0 + 3 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC0 + 5 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC0 + 7 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC0 + 9 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC0 + 11 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC0 + 13 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC0 + 15 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC0 + 17 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC0 + 19 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC0 + 21 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC0 + 23 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC0 + 25 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC0 + 27 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC0 + 29 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC0 + 31 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIYi = (((XC1 + XC0) / 2 - arrWSCW(intN, 0)) ^ 2) * L01 * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)	
+				End If
+				If VarType(arrPKT_B(intM, intN, 3)) = vbString Then
+					XC2 = arrPKT_BW(intM, intN, 2, 0)
+					XC3 = arrPKT_BW(intM, intN, 3, 0)
+					YC2 = arrPKT_BW(intM, intN, 2, 1)
+					YC3 = arrPKT_BW(intM, intN, 3, 1)
+					ZC2 = arrPKT_BW(intM, intN, 2, 2)
+					ZC3 = arrPKT_BW(intM, intN, 3, 2)	
+					L23 = Abs(YC3 - YC2)
+					dblIXi = dblIXi + (((YC2 + 1 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 3 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 5 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 7 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 9 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 11 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 13 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 15 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 17 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 19 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 21 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 23 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 25 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 27 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 29 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 31 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)		
+					dblIYi = dblIYi + (((XC3 + XC2) / 2 - arrWSCW(intN, 0)) ^ 2) * L23 * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+				End If
+				If VarType(arrPKT_B(intM, intN, 5)) = vbString Then
+					XC4 = arrPKT_BW(intM, intN, 4, 0)
+					XC5 = arrPKT_BW(intM, intN, 5, 0)
+					YC4 = arrPKT_BW(intM, intN, 4, 1)
+					YC5 = arrPKT_BW(intM, intN, 5, 1)
+					ZC4 = arrPKT_BW(intM, intN, 4, 2)
+					ZC5 = arrPKT_BW(intM, intN, 5, 2)		
+					L45 = Abs(YC5 - YC4)
+					dblIXi = dblIXi + (((YC4 + 1 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 3 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 5 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 7 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 9 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 11 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 13 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 15 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 17 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 19 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 21 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 23 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 25 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 27 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 29 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 31 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIYi = dblIYi + (((XC5 + XC4) / 2 - arrWSCW(intN, 0)) ^ 2) * L45 * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+				End If
+				If VarType(arrPKT_B(intM, intN, 7)) = vbString Then
+					XC6 = arrPKT_BW(intM, intN, 6, 0)
+					XC7 = arrPKT_BW(intM, intN, 7, 0)
+					YC6 = arrPKT_BW(intM, intN, 6, 1)
+					YC7 = arrPKT_BW(intM, intN, 7, 1)
+					ZC6 = arrPKT_BW(intM, intN, 6, 2)
+					ZC7 = arrPKT_BW(intM, intN, 7, 2)		
+					L67 = Abs(YC7 - YC6)
+					dblIXi = dblIXi + (((YC6 + 1 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC6 + 3 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)
+					dblIXi = dblIXi + (((YC6 + 5 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)
+					dblIXi = dblIXi + (((YC6 + 7 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)
+					dblIXi = dblIXi + (((YC6 + 9 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)
+					dblIXi = dblIXi + (((YC6 + 11 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)
+					dblIXi = dblIXi + (((YC6 + 13 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)
+					dblIXi = dblIXi + (((YC6 + 15 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)
+					dblIXi = dblIXi + (((YC6 + 17 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)
+					dblIXi = dblIXi + (((YC6 + 19 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)
+					dblIXi = dblIXi + (((YC6 + 21 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)
+					dblIXi = dblIXi + (((YC6 + 23 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)
+					dblIXi = dblIXi + (((YC6 + 25 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)
+					dblIXi = dblIXi + (((YC6 + 27 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)
+					dblIXi = dblIXi + (((YC6 + 29 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)
+					dblIXi = dblIXi + (((YC6 + 31 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)	
+					dblIYi = dblIYi + (((XC7 + XC6) / 2 - arrWSCW(intN, 0)) ^ 2) * L67 * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+				End If
+				dblIX = dblIX + dblIXi
+				dblIY = dblIY + dblIYi
+			Loop
+			arrIX(intN) = dblIX
+			arrIY(intN) = dblIY
+			Call Rhino.Print("Obliczono momenty Ix wodnicy nr: " & intN & " " & arrIX(intN))
+			Call Rhino.Print("Obliczono momenty Iy wodnicy nr: " & intN & " " & arrIY(intN))
+		Loop
+	End If
+	
+	'------- EKSPORT PARAMETRÓW DO PLIKU
+	
+	Dim arrPT_B() 'tablica zawierająca dane do pliku tekstowego (dane liczone po wysokościach bezwględnych)
+	Dim dblLP 'liczba porządkowa w pliku tekstowym
+	
+	
+	If blnOdp1 = 0 Then
+		ReDim arrPT_B(0)
+		arrPT_B(0) = "L.p. " & " Wysokość(z)/m " & " Obj.netto/m^3 " & " XC/m " & " YC/m " & " ZC/m " & "A/m2 " & "AXC/m " & "AYC/m " & "AZC/m " & " IX/m^4 " & " IY/m^4 " 
+		dblLP = 0
+	
+	
+		For intN=0 To UBound(arrPPWB)
+			dblLP = intN + 1
+			ReDim Preserve arrPT_B(intN+1)
+			arrPT_B(intN + 1) = dblLP & " " & arrAZ_B(intN) / 1000 & " " & arrV(intN) / 1000000000 & " " & arrWSC(intN, 0) / 1000 & " " & arrWSC(intN, 1) / 1000 & " " & arrWSC(intN, 2) / 1000 & " " & arrA(intN) / 1000000 & " " & arrWSCW(intN, 0) / 1000 & " " & arrWSCW(intN, 1) / 1000 & " " & arrWSCW(intN, 2) / 1000 & " " & arrIX(intN) / 1000000000000 & " " & arrIY(intN) / 1000000000000
+		Next
+	End If
+	
+	'------- EKSPORT PARAMETRÓW BRYŁY PO WYSOKOŚCI BEZWZGLĘDNEJ
+	
+	Dim strNAZWA_B 'nazwa pliku z parametrami po wysokości bezwględnej
+	
+	If blnOdp1 = 0 Then
+		strNAZWA_B = Rhino.SaveFileName("Zapisz plik parametrów po wysokości bezwględnej", "Text Files (*.txt)|*.txt||", , "Zbiornik_wyniki_po_z")
+
+		If Not IsNull(strNAZWA_B) Then
+			Call Rhino.WriteTextFile(strNAZWA_B, arrPT_B)
+		End If
+	End If
+	
+	'------- OBLICZENIA WEDŁUG SONDY
+	
+	Dim arrDL_S() 'tablica z długościami linii dla dodatkowych płaszczyzn po wysokości sondy
+	Dim arrSCL_S() 'środek ciężkości linii dla dotakowych płaszczyzn po wysokości sondy
+	
+	If blnOdp1 = 1 Then
+		ReDim arrDL_S(UBound(arrPPWS),UBound(arrTKX))
+		ReDim arrSCL_S(UBound(arrPPWS),UBound(arrTKX),2)
+	End If
+		
+	'obliczenie łącznych długości linii
+
+	If blnOdp1 = 1 Then
+		intN = -1		
+		Do While intN < UBound(arrPPWS)
+			intN = intN + 1
+			intM = -1
+			Do While intM < UBound(arrTKX) 
+				intM = intM + 1
+				If VarType(arrPKT_S(intM, intN, 1)) = vbString Then
+					arrDL_S(intN, intM) = Abs(arrPKT_SW(intM, intN, 1, 1) - arrPKT_SW(intM, intN, 0, 1))
+				End If
+				If VarType(arrPKT_S(intM, intN, 3)) = vbString Then
+					arrDL_S(intN, intM) = arrDL_S(intN, intM) + Abs(arrPKT_SW(intM, intN, 3, 1) - arrPKT_SW(intM, intN, 2, 1))	
+				End If
+				If VarType(arrPKT_S(intM, intN, 5)) = vbString Then
+					arrDL_S(intN, intM) = arrDL_S(intN, intM) + Abs(arrPKT_S(intM, intN, 5, 1) - arrPKT_S(intM, intN, 4, 1))	
+				End If
+				If VarType(arrPKT_S(intM, intN, 7)) = vbString Then
+					arrDL_S(intN, intM) = arrDL_S(intN, intM) + Abs(arrPKT_SW(intM, intN, 7, 1) - arrPKT_SW(intM, intN, 6, 1))	
+				End If
+				Call Rhino.Print("Długość linii w przedziale: " & intM & " " & intN & " / " & arrDL_S(intN, intM))
+			Loop
+		Loop
+	End If
+	
+	'obliczenie łącznych długości linii DLA PRZECIĘĆ DODATKOWYCH
+	
+	Dim arrDL_SD() 'tablica z długościami linii dla dodatkowych płaszczyzn po wysokości sondy
+	Dim arrSCL_SD() 'środek ciężkości linii dla dotakowych płaszczyzn po wysokości sondy
+	
+	If blnOdp1 = 1 Then
+		ReDim arrDL_SD(UBound(arrPPWSD),UBound(arrTKX))
+		ReDim arrSCL_SD(UBound(arrPPWSD),UBound(arrTKX),2)
+	End If
+
+	If blnOdp1 = 1 Then
+		intN = -1		
+		Do While intN < UBound(arrPPWSD)
+			intN = intN + 1
+			intM = -1
+			Do While intM < UBound(arrTKX) 
+				intM = intM + 1
+				If VarType(arrPKT_SD(intM, intN, 1)) = vbString Then
+					arrDL_SD(intN, intM) = Abs(arrPKT_SDW(intM, intN, 1, 1) - arrPKT_SDW(intM, intN, 0, 1))
+				End If
+				If VarType(arrPKT_SD(intM, intN, 3)) = vbString Then
+					arrDL_SD(intN, intM) = arrDL_SD(intN, intM) + Abs(arrPKT_SDW(intM, intN, 3, 1) - arrPKT_SDW(intM, intN, 2, 1))	
+				End If
+				If VarType(arrPKT_SD(intM, intN, 5)) = vbString Then
+					arrDL_SD(intN, intM) = arrDL_SD(intN, intM) + Abs(arrPKT_SD(intM, intN, 5, 1) - arrPKT_SD(intM, intN, 4, 1))	
+				End If
+				If VarType(arrPKT_SD(intM, intN, 7)) = vbString Then
+					arrDL_SD(intN, intM) = arrDL_SD(intN, intM) + Abs(arrPKT_SDW(intM, intN, 7, 1) - arrPKT_SDW(intM, intN, 6, 1))	
+				End If
+				Call Rhino.Print("Długość linii w przedziale dodatkowym: " & intM & " " & intN & " / " & arrDL_SD(intN, intM))
+			Loop
+		Loop
+	End If
+	
+	'	obliczenie środka ciężkości sumy linii
+	
+	If blnOdp1 = 1 Then
+		intN = -1		
+		Do While intN < UBound(arrPPWS)
+			intN = intN + 1
+			intM = -1
+			Do While intM < UBound(arrTKX) 
+				intM = intM + 1
+				If VarType(arrPKT_S(intM, intN, 1)) = vbString Then
+					XC0 = arrPKT_SW(intM, intN, 0, 0)
+					XC1 = arrPKT_SW(intM, intN, 1, 0)
+					YC0 = arrPKT_SW(intM, intN, 0, 1)
+					YC1 = arrPKT_SW(intM, intN, 1, 1)
+					ZC0 = arrPKT_SW(intM, intN, 0, 2)
+					ZC1 = arrPKT_SW(intM, intN, 1, 2)
+					arrSCL_S(intN, intM, 0) = (XC0 + XC1) / 2
+					arrSCL_S(intN, intM, 1) = (YC0 + YC1) / 2
+					arrSCL_S(intN, intM, 2) = (ZC0 + ZC1) / 2
+				End If
+				If VarType(arrPKT_S(intM, intN, 3)) = vbString Then
+					XC2 = arrPKT_SW(intM, intN, 2, 0)
+					XC3 = arrPKT_SW(intM, intN, 3, 0)
+					YC2 = arrPKT_SW(intM, intN, 2, 1)
+					YC3 = arrPKT_SW(intM, intN, 3, 1)
+					ZC2 = arrPKT_SW(intM, intN, 2, 2)
+					ZC3 = arrPKT_SW(intM, intN, 3, 2)	
+					L01 = Abs(YC1 - YC0)
+					L23 = Abs(YC3 - YC2)
+					arrSCL_S(intN, intM, 0) = (((XC0 + XC1) / 2) * L01 + ((XC2 + XC3) / 2) * L23) / (L01 + L23)
+					arrSCL_S(intN, intM, 1) = (((YC0 + YC1) / 2) * L01 + ((YC2 + YC3) / 2) * L23) / (L01 + L23)
+					arrSCL_S(intN, intM, 2) = (((ZC0 + ZC1) / 2) * L01 + ((ZC2 + ZC3) / 2) * L23) / (L01 + L23)
+				End If
+				If VarType(arrPKT_S(intM, intN, 5)) = vbString Then
+					XC4 = arrPKT_SW(intM, intN, 4, 0)
+					XC5 = arrPKT_SW(intM, intN, 5, 0)
+					YC4 = arrPKT_SW(intM, intN, 4, 1)
+					YC5 = arrPKT_SW(intM, intN, 5, 1)
+					ZC4 = arrPKT_SW(intM, intN, 4, 2)
+					ZC5 = arrPKT_SW(intM, intN, 5, 2)		
+					L45 = Abs(YC5 - YC4)
+					arrSCL_S(intN, intM, 0) = (((XC0 + XC1) / 2) * L01 + ((XC2 + XC3) / 2) * L23 + ((XC4 + XC5) / 2) * L45) / (L01 + L23 + L45)
+					arrSCL_S(intN, intM, 1) = (((YC0 + YC1) / 2) * L01 + ((YC2 + YC3) / 2) * L23 + ((YC4 + YC5) / 2) * L45) / (L01 + L23 + L45)
+					arrSCL_S(intN, intM, 2) = (((ZC0 + ZC1) / 2) * L01 + ((ZC2 + ZC3) / 2) * L23 + ((ZC4 + ZC5) / 2) * L45) / (L01 + L23 + L45)
+				End If
+				If VarType(arrPKT_S(intM, intN, 7)) = vbString Then
+					XC6 = arrPKT_SW(intM, intN, 6, 0)
+					XC7 = arrPKT_SW(intM, intN, 7, 0)
+					YC6 = arrPKT_SW(intM, intN, 6, 1)
+					YC7 = arrPKT_SW(intM, intN, 7, 1)
+					ZC6 = arrPKT_SW(intM, intN, 6, 2)
+					ZC7 = arrPKT_SW(intM, intN, 7, 2)		
+					L67 = Abs(YC7 - YC6)
+					arrSCL_S(intN, intM, 0) = (((XC0 + XC1) / 2) * L01 + ((XC2 + XC3) / 2) * L23 + ((XC4 + XC5) / 2) * L45 + ((XC6 + XC7) / 2) * L67) / (L01 + L23 + L45 + L67)
+					arrSCL_S(intN, intM, 1) = (((YC0 + YC1) / 2) * L01 + ((YC2 + YC3) / 2) * L23 + ((YC4 + YC5) / 2) * L45 + ((YC6 + YC7) / 2) * L67) / (L01 + L23 + L45 + L67)
+					arrSCL_S(intN, intM, 2) = (((ZC0 + ZC1) / 2) * L01 + ((ZC2 + ZC3) / 2) * L23 + ((ZC4 + ZC5) / 2) * L45 + ((ZC6 + ZC7) / 2) * L67) / (L01 + L23 + L45 + L67)
+				End If
+				If VarType(arrPKT_S(intM, intN, 1)) = vbString Then
+					Call Rhino.Print("Środek ciężkości linii w przedziale: " & intM & " " & intN & " / " & arrSCL_S(intN, intM, 0) & " " & arrSCL_S(intN, intM, 1) & " " & arrSCL_S(intN, intM, 2))
+				End If
+			Loop
+		Loop
+	End If
+	
+	'	obliczenie środka ciężkości sumy linii DLA PRZECIĘĆ DODATKOWYCH
+	
+	If blnOdp1 = 1 Then
+		intN = -1		
+		Do While intN < UBound(arrPPWSD)
+			intN = intN + 1
+			intM = -1
+			Do While intM < UBound(arrTKX) 
+				intM = intM + 1
+				If VarType(arrPKT_SD(intM, intN, 1)) = vbString Then
+					XC0 = arrPKT_SDW(intM, intN, 0, 0)
+					XC1 = arrPKT_SDW(intM, intN, 1, 0)
+					YC0 = arrPKT_SDW(intM, intN, 0, 1)
+					YC1 = arrPKT_SDW(intM, intN, 1, 1)
+					ZC0 = arrPKT_SDW(intM, intN, 0, 2)
+					ZC1 = arrPKT_SDW(intM, intN, 1, 2)
+					arrSCL_SD(intN, intM, 0) = (XC0 + XC1) / 2
+					arrSCL_SD(intN, intM, 1) = (YC0 + YC1) / 2
+					arrSCL_SD(intN, intM, 2) = (ZC0 + ZC1) / 2
+				End If
+				If VarType(arrPKT_SD(intM, intN, 3)) = vbString Then
+					XC2 = arrPKT_SDW(intM, intN, 2, 0)
+					XC3 = arrPKT_SDW(intM, intN, 3, 0)
+					YC2 = arrPKT_SDW(intM, intN, 2, 1)
+					YC3 = arrPKT_SDW(intM, intN, 3, 1)
+					ZC2 = arrPKT_SDW(intM, intN, 2, 2)
+					ZC3 = arrPKT_SDW(intM, intN, 3, 2)	
+					L01 = Abs(YC1 - YC0)
+					L23 = Abs(YC3 - YC2)
+					arrSCL_SD(intN, intM, 0) = (((XC0 + XC1) / 2) * L01 + ((XC2 + XC3) / 2) * L23) / (L01 + L23)
+					arrSCL_SD(intN, intM, 1) = (((YC0 + YC1) / 2) * L01 + ((YC2 + YC3) / 2) * L23) / (L01 + L23)
+					arrSCL_SD(intN, intM, 2) = (((ZC0 + ZC1) / 2) * L01 + ((ZC2 + ZC3) / 2) * L23) / (L01 + L23)
+				End If
+				If VarType(arrPKT_SD(intM, intN, 5)) = vbString Then
+					XC4 = arrPKT_SDW(intM, intN, 4, 0)
+					XC5 = arrPKT_SDW(intM, intN, 5, 0)
+					YC4 = arrPKT_SDW(intM, intN, 4, 1)
+					YC5 = arrPKT_SDW(intM, intN, 5, 1)
+					ZC4 = arrPKT_SDW(intM, intN, 4, 2)
+					ZC5 = arrPKT_SDW(intM, intN, 5, 2)		
+					L45 = Abs(YC5 - YC4)
+					arrSCL_SD(intN, intM, 0) = (((XC0 + XC1) / 2) * L01 + ((XC2 + XC3) / 2) * L23 + ((XC4 + XC5) / 2) * L45) / (L01 + L23 + L45)
+					arrSCL_SD(intN, intM, 1) = (((YC0 + YC1) / 2) * L01 + ((YC2 + YC3) / 2) * L23 + ((YC4 + YC5) / 2) * L45) / (L01 + L23 + L45)
+					arrSCL_SD(intN, intM, 2) = (((ZC0 + ZC1) / 2) * L01 + ((ZC2 + ZC3) / 2) * L23 + ((ZC4 + ZC5) / 2) * L45) / (L01 + L23 + L45)
+				End If
+				If VarType(arrPKT_SD(intM, intN, 7)) = vbString Then
+					XC6 = arrPKT_SDW(intM, intN, 6, 0)
+					XC7 = arrPKT_SDW(intM, intN, 7, 0)
+					YC6 = arrPKT_SDW(intM, intN, 6, 1)
+					YC7 = arrPKT_SDW(intM, intN, 7, 1)
+					ZC6 = arrPKT_SDW(intM, intN, 6, 2)
+					ZC7 = arrPKT_SDW(intM, intN, 7, 2)		
+					L67 = Abs(YC7 - YC6)
+					arrSCL_SD(intN, intM, 0) = (((XC0 + XC1) / 2) * L01 + ((XC2 + XC3) / 2) * L23 + ((XC4 + XC5) / 2) * L45 + ((XC6 + XC7) / 2) * L67) / (L01 + L23 + L45 + L67)
+					arrSCL_SD(intN, intM, 1) = (((YC0 + YC1) / 2) * L01 + ((YC2 + YC3) / 2) * L23 + ((YC4 + YC5) / 2) * L45 + ((YC6 + YC7) / 2) * L67) / (L01 + L23 + L45 + L67)
+					arrSCL_SD(intN, intM, 2) = (((ZC0 + ZC1) / 2) * L01 + ((ZC2 + ZC3) / 2) * L23 + ((ZC4 + ZC5) / 2) * L45 + ((ZC6 + ZC7) / 2) * L67) / (L01 + L23 + L45 + L67)
+				End If
+				If VarType(arrPKT_SD(intM, intN, 1)) = vbString Then
+					Call Rhino.Print("Środek ciężkości linii w przedziale: " & intM & " " & intN & " / " & arrSCL_SD(intN, intM, 0) & " " & arrSCL_SD(intN, intM, 1) & " " & arrSCL_SD(intN, intM, 2))
+				End If
+			Loop
+		Loop
+	End If
+	
+	'obliczenia fizycznych wielkości w przedziałach DEFINICJA ZMIENNYCH
+	
+	If blnOdp1 = 1 Then
+		ReDim arrV(UBound(arrPPWS))
+		ReDim arrWSC(UBound(arrPPWS),2)
+		ReDim arrA(UBound(arrPPWS))
+		ReDim arrWSCW(UBound(arrPPWS),2)
+		ReDim arrIX(UBound(arrPPWS))
+		ReDim arrIY(UBound(arrPPWS))
+	End If
+		
+	'pierwszy przedział intN=0 w tablicy po sondzie (czyli wynik podsumowujący w tablicy pomocniczej)
+	
+	If blnOdp1 = 1 Then
+		dblV = 0
+		dblXC = 0
+		dblYC = 0
+		dblZC = 0
+		dblAXCi = 0
+		dblAYCi = 0
+		dblAZCi = 0
+		intN = -1		
+		Do While intN < UBound(arrPPWSD) - 1
+			intN = intN + 1
+			intM = -1
+			dblA = 0
+			Do While intM < UBound(arrTKX) 
+				intM = intM + 1
+				If VarType(arrPKT_SD(intM, intN, 1)) = vbString Then
+					If VarType(arrPKT_SD(intM, intN + 1, 1)) = vbString Then
+						dblVi = (arrDL_SD(intN, intM)) * abs(arrSCL_SD(intN, intM, 2) - arrSCL_SD(intN + 1, intM, 2)) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+						dblXCi = (arrSCL_SD(intN, intM, 0) + arrSCL_SD(intN + 1, intM, 0)) / 2
+						dblYCi = (arrSCL_SD(intN, intM, 1) + arrSCL_SD(intN + 1, intM, 1)) / 2
+						dblZCi = (arrSCL_SD(intN, intM, 2) + arrSCL_SD(intN + 1, intM, 2)) / 2
+						dblXC = (dblXC * dblV + dblXCi * dblVi) / (dblV + dblVi)
+						dblYC = (dblYC * dblV + dblYCi * dblVi) / (dblV + dblVi)
+						dblZC = (dblZC * dblV + dblZCi * dblVi) / (dblV + dblVi)
+						dblV = dblV + dblVi
+					
+						dblAi = (arrDL_SD(intN, intM)) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+						dblAXCi = arrSCL_SD(intN, intM, 0)
+						dblAYCi = arrSCL_SD(intN, intM, 1)
+						dblAZCi = arrSCL_SD(intN, intM, 2)
+						dblAXC = (dblAXC * dblA + dblAXCi * dblAi) / (dblA + dblAi)
+						dblAYC = (dblAYC * dblA + dblAYCi * dblAi) / (dblA + dblAi)
+						dblAZC = (dblAZC * dblA + dblAZCi * dblAi) / (dblA + dblAi)
+						dblA = dblA + dblAi
+					End If
+				End If
+			Loop
+		Loop
+	
+		intN = UBound(arrPPWSD)
+		
+		If VarType(arrPKT_S(intM, intN, 1)) = vbString Then
+			dblVi = (arrDL_S(intN, intM)) * (dblPoS / 2) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+			dblXCi = arrSCL_S(intN, intM, 0) - (dblPoS / 2)
+			dblYCi = arrSCL_S(intN, intM, 1) - (dblPoS / 2)
+			dblZCi = arrSCL_S(intN, intM, 2) - (dblPoS / 2)
+			dblXC = (dblXC * dblV + dblXCi * dblVi) / (dblV + dblVi)
+			dblYC = (dblYC * dblV + dblYCi * dblVi) / (dblV + dblVi)
+			dblZC = (dblZC * dblV + dblZCi * dblVi) / (dblV + dblVi)
+			dblV = dblV + dblVi
+					
+			dblAi = (arrDL_S(intN, intM)) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+			dblAXCi = arrSCL_S(intN, intM, 0)
+			dblAYCi = arrSCL_S(intN, intM, 1)
+			dblAZCi = arrSCL_S(intN, intM, 2)
+			dblAXC = (dblAXC * dblA + dblAXCi * dblAi) / (dblA + dblAi)
+			dblAYC = (dblAYC * dblA + dblAYCi * dblAi) / (dblA + dblAi)
+			dblAZC = (dblAZC * dblA + dblAZCi * dblAi) / (dblA + dblAi)
+			dblA = dblA + dblAi
+		End If
+		
+		intN = 0	
+		arrA(intN) = dblA
+		arrV(intN) = dblV
+		Call Rhino.Print("Obliczono objętosć w przedziale: " & intN & " " & arrV(intN))
+		Call Rhino.Print("Obliczono powierzchnię wodnicy w przedziale: " & intN & " " & arrA(intN))
+		arrWSC(intN, 0) = dblXC
+		arrWSC(intN, 1) = dblYC
+		arrWSC(intN, 2) = dblZC
+		Call Rhino.Print("Obliczono współrzędne środka ciężkości płynu w przedziale: " & intN & " " & arrWSC(intN, 0) & " " & arrWSC(intN, 1) & " " & arrWSC(intN, 2))
+		arrWSCW(intN, 0) = dblAXC
+		arrWSCW(intN, 1) = dblAYC
+		arrWSCW(intN, 2) = dblAZC
+		Call Rhino.Print("Obliczono współrzędne środka ciężkości wodnicy w przedziale: " & intN & " " & arrWSCW(intN, 0) & " " & arrWSCW(intN, 1) & " " & arrWSCW(intN, 2))	
+	End If
+	
+	'przedziały od intN=1 do końca
+	
+	If blnOdp1 = 1 Then
+		intN = 0		
+		Do While intN < UBound(arrPPWS)
+			intN = intN + 1
+			intM = -1
+			dblA = 0
+			Do While intM < UBound(arrTKX) 
+				intM = intM + 1
+				If VarType(arrPKT_S(intM, intN, 1)) = vbString Then
+					If VarType(arrPKT_S(intM, intN - 1, 1)) = vbString Then
+						dblVi = (arrDL_S(intN, intM)) * abs(arrSCL_S(intN, intM, 2) - arrSCL_S(intN - 1, intM, 2)) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+						dblXCi = (arrSCL_S(intN, intM, 0) + arrSCL_S(intN - 1, intM, 0)) / 2
+						dblYCi = (arrSCL_S(intN, intM, 1) + arrSCL_S(intN - 1, intM, 1)) / 2
+						dblZCi = (arrSCL_S(intN, intM, 2) + arrSCL_S(intN - 1, intM, 2)) / 2
+						dblXC = (dblXC * dblV + dblXCi * dblVi) / (dblV + dblVi)
+						dblYC = (dblYC * dblV + dblYCi * dblVi) / (dblV + dblVi)
+						dblZC = (dblZC * dblV + dblZCi * dblVi) / (dblV + dblVi)
+						dblV = dblV + dblVi
+					
+						dblAi = (arrDL_S(intN, intM)) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+						dblAXCi = arrSCL_S(intN, intM, 0)
+						dblAYCi = arrSCL_S(intN, intM, 1)
+						dblAZCi = arrSCL_S(intN, intM, 2)
+						dblAXC = (dblAXC * dblA + dblAXCi * dblAi) / (dblA + dblAi)
+						dblAYC = (dblAYC * dblA + dblAYCi * dblAi) / (dblA + dblAi)
+						dblAZC = (dblAZC * dblA + dblAZCi * dblAi) / (dblA + dblAi)
+						dblA = dblA + dblAi
+					End If
+				End If
+			Loop
+			arrA(intN) = dblA
+			arrV(intN) = dblV - (dblPRC / 100) * dblV
+			Call Rhino.Print("Obliczono objętosć w przedziale: " & intN & " " & arrV(intN))
+			Call Rhino.Print("Obliczono powierzchnię wodnicy w przedziale: " & intN & " " & arrA(intN))
+			arrWSC(intN, 0) = dblXC
+			arrWSC(intN, 1) = dblYC
+			arrWSC(intN, 2) = dblZC
+			Call Rhino.Print("Obliczono współrzędne środka ciężkości płynu w przedziale: " & intN & " " & arrWSC(intN, 0) & " " & arrWSC(intN, 1) & " " & arrWSC(intN, 2))
+			arrWSCW(intN, 0) = dblAXC
+			arrWSCW(intN, 1) = dblAYC
+			arrWSCW(intN, 2) = dblAZC
+			Call Rhino.Print("Obliczono współrzędne środka ciężkości wodnicy w przedziale: " & intN & " " & arrWSCW(intN, 0) & " " & arrWSCW(intN, 1) & " " & arrWSCW(intN, 2))
+		Loop
+	End If
+	
+	'momenty bezwładności wodnic
+	
+	If blnOdp1 = 1 Then
+		intN = -1		
+		Do While intN < UBound(arrPPWS)
+			intN = intN + 1
+			dblIX = 0
+			dblIY = 0
+			intM = -1
+			Do While intM < UBound(arrTKX) 
+				intM = intM + 1
+				dblIXi = 0
+				dblIYi = 0
+				If VarType(arrPKT_S(intM, intN, 1)) = vbString Then
+					XC0 = arrPKT_SW(intM, intN, 0, 0)
+					XC1 = arrPKT_SW(intM, intN, 1, 0)
+					YC0 = arrPKT_SW(intM, intN, 0, 1)
+					YC1 = arrPKT_SW(intM, intN, 1, 1)
+					ZC0 = arrPKT_SW(intM, intN, 0, 2)
+					ZC1 = arrPKT_SW(intM, intN, 1, 2)
+					L01 = Abs(YC1 - YC0)
+					dblIXi = (((YC0 + (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)'trzeba podzielić na odcinki w celu redukcji błędu obliczeniowego
+					dblIXi = dblIXi + (((YC0 + 3 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC0 + 5 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC0 + 7 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC0 + 9 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC0 + 11 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC0 + 13 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC0 + 15 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC0 + 17 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC0 + 19 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC0 + 21 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC0 + 23 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC0 + 25 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC0 + 27 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC0 + 29 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC0 + 31 * (YC1 - YC0) / 32) - arrWSCW(intN, 1)) ^ 2) * (L01 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIYi = (((XC1 + XC0) / 2 - arrWSCW(intN, 0)) ^ 2) * L01 * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)	
+				End If
+				If VarType(arrPKT_S(intM, intN, 3)) = vbString Then
+					XC2 = arrPKT_SW(intM, intN, 2, 0)
+					XC3 = arrPKT_SW(intM, intN, 3, 0)
+					YC2 = arrPKT_SW(intM, intN, 2, 1)
+					YC3 = arrPKT_SW(intM, intN, 3, 1)
+					ZC2 = arrPKT_SW(intM, intN, 2, 2)
+					ZC3 = arrPKT_SW(intM, intN, 3, 2)	
+					L23 = Abs(YC3 - YC2)
+					dblIXi = dblIXi + (((YC2 + 1 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 3 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 5 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 7 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 9 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 11 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 13 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 15 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 17 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 19 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 21 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 23 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 25 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 27 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 29 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC2 + 31 * (YC3 - YC2) / 32) - arrWSCW(intN, 1)) ^ 2) * (L23 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)		
+					dblIYi = dblIYi + (((XC3 + XC2) / 2 - arrWSCW(intN, 0)) ^ 2) * L23 * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+				End If
+				If VarType(arrPKT_S(intM, intN, 5)) = vbString Then
+					XC4 = arrPKT_SW(intM, intN, 4, 0)
+					XC5 = arrPKT_SW(intM, intN, 5, 0)
+					YC4 = arrPKT_SW(intM, intN, 4, 1)
+					YC5 = arrPKT_SW(intM, intN, 5, 1)
+					ZC4 = arrPKT_SW(intM, intN, 4, 2)
+					ZC5 = arrPKT_SW(intM, intN, 5, 2)		
+					L45 = Abs(YC5 - YC4)
+					dblIXi = dblIXi + (((YC4 + 1 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 3 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 5 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 7 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 9 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 11 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 13 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 15 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 17 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 19 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 21 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 23 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 25 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 27 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 29 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC4 + 31 * (YC5 - YC4) / 32) - arrWSCW(intN, 1)) ^ 2) * (L45 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIYi = dblIYi + (((XC5 + XC4) / 2 - arrWSCW(intN, 0)) ^ 2) * L45 * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+				End If
+				If VarType(arrPKT_S(intM, intN, 7)) = vbString Then
+					XC6 = arrPKT_SW(intM, intN, 6, 0)
+					XC7 = arrPKT_SW(intM, intN, 7, 0)
+					YC6 = arrPKT_SW(intM, intN, 6, 1)
+					YC7 = arrPKT_SW(intM, intN, 7, 1)
+					ZC6 = arrPKT_SW(intM, intN, 6, 2)
+					ZC7 = arrPKT_SW(intM, intN, 7, 2)		
+					L67 = Abs(YC7 - YC6)
+					dblIXi = dblIXi + (((YC6 + 1 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+					dblIXi = dblIXi + (((YC6 + 3 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)
+					dblIXi = dblIXi + (((YC6 + 5 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)
+					dblIXi = dblIXi + (((YC6 + 7 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)
+					dblIXi = dblIXi + (((YC6 + 9 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)
+					dblIXi = dblIXi + (((YC6 + 11 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)
+					dblIXi = dblIXi + (((YC6 + 13 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)
+					dblIXi = dblIXi + (((YC6 + 15 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)
+					dblIXi = dblIXi + (((YC6 + 17 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)
+					dblIXi = dblIXi + (((YC6 + 19 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)
+					dblIXi = dblIXi + (((YC6 + 21 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)
+					dblIXi = dblIXi + (((YC6 + 23 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)
+					dblIXi = dblIXi + (((YC6 + 25 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)
+					dblIXi = dblIXi + (((YC6 + 27 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)
+					dblIXi = dblIXi + (((YC6 + 29 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)
+					dblIXi = dblIXi + (((YC6 + 31 * (YC7 - YC6) / 32) - arrWSCW(intN, 1)) ^ 2) * (L67 / 16) * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLP)	
+					dblIYi = dblIYi + (((XC7 + XC6) / 2 - arrWSCW(intN, 0)) ^ 2) * L67 * (arrPoX(intM) * ((dblLPP ^ 2 + dblPRZEG_MM ^ 2) ^ (1 / 2)) / dblLPP)
+				End If
+				dblIX = dblIX + dblIXi
+				dblIY = dblIY + dblIYi
+			Loop
+			arrIX(intN) = dblIX
+			arrIY(intN) = dblIY
+			Call Rhino.Print("Obliczono momenty Ix wodnicy nr: " & intN & " " & arrIX(intN))
+			Call Rhino.Print("Obliczono momenty Iy wodnicy nr: " & intN & " " & arrIY(intN))
+		Loop
+	End If
+	
+	'------- EKSPORT PARAMETRÓW DO PLIKU
+	
+	Dim arrPT_S() 'tablica zawierająca dane do pliku tekstowego (dane liczone po wysokościach sondy)
+	
+	If blnOdp1 = 1 Then
+		ReDim arrPT_S(0)
+		arrPT_S(0) = "L.p. " & "Sonda(l)/m " & "Wysokość(z)/m " & "Obj.netto/m^3 " & "XC/m " & "YC/m " & "ZC/m " & "A/m2 " & "AXC/m " & "AYC/m " & "AZC/m " & "IX/m^4 " & "IY/m^4 " 
+		dblLP = 0
+	
+	
+		For intN=0 To UBound(arrPPWS)
+			dblLP = intN + 1
+			ReDim Preserve arrPT_S(intN+1)
+			arrPT_S(intN + 1) = dblLP & " " & arrSL(intN) / 1000 & " " & arrSZ_WZ(intN) / 1000 & " " & arrV(intN) / 1000000000 & " " & arrWSC(intN, 0) / 1000 & " " & arrWSC(intN, 1) / 1000 & " " & arrWSC(intN, 2) / 1000 & " " & arrA(intN) / 1000000 & " " & arrWSCW(intN, 0) / 1000 & " " & arrWSCW(intN, 1) / 1000 & " " & arrWSCW(intN, 2) / 1000 & " " & arrIX(intN) / 1000000000000 & " " & arrIY(intN) / 1000000000000
+		Next
+	End If
+	
+	'------- EKSPORT PARAMETRÓW BRYŁY PO WYSOKOŚCI SONDY
+	
+	Dim strNAZWA_S 'nazwa pliku z parametrami po wysokości sondy
+	
+	If blnOdp1 = 1 Then
+		strNAZWA_S = Rhino.SaveFileName("Zapisz plik parametrów po wysokości sondy", "Text Files (*.txt)|*.txt||", , "Zbiornik_wyniki_po_sondzie")
+
+		If Not IsNull(strNAZWA_S) Then
+			Call Rhino.WriteTextFile(strNAZWA_S, arrPT_S)
+		End If
+	End If
+	
+	Rhino.EnableRedraw(1)
+	
+End Sub

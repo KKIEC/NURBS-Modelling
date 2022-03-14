@@ -1,0 +1,152 @@
+﻿Option Explicit
+'Script written by Krzysztof Kiec
+'Script version środa, 15 lipca 2020 09:25:02
+
+Call Main()
+Sub Main()
+
+	'------- WPROWADZENIE PKT PRZECIĘCIA OWRĘŻA/PP/PS
+	
+	Dim arrPUW ' początek układu współrzędnych
+	arrPUW = Rhino.GetPoint("Podaj punkt przecięcia owręża/PP/PS")
+	
+	'------- IDENTYFIKACJA WĘZŁÓW
+	
+	Dim arrWZL 'tablica zawierająca ID wszystkich pkt stanowiących węzły siatki
+	Dim i 'indykator pętli
+	
+	arrWZL = Rhino.GetObjects("Zaznacz węzły", 1)
+	For i=0 To UBound(arrWZL)
+		Call Rhino.Print("ID węzła nr: " & i & " / " & arrWZL(i))
+	Next
+	
+	'------- IDENTYFIKACJA ELEMENTÓW BELKOWYCH
+	
+	Dim arrEL 'tablica zawierająca ID wszystkich elementów skończonych (linii pomiędzy węzłami)
+	Dim intTYP ' typ elementu belkowego (2,13)
+	
+	intTYP = Rhino.GetReal("Podaj typ elementu belkowego (2;13)")
+	
+	arrEL = Rhino.GetObjects("Zaznacz elementy belkowe", 4)
+	For i=0 To UBound(arrEL)
+		Call Rhino.Print("ID elementu belkowego nr: " & i & " / " & arrEL(i))
+	Next
+	
+	'------- DEFINICJA TYPU ZAGADNIENIA (2D czy 3D)
+	
+	Dim intWYM ' wymiar zagadnienia (2D czy 3D)
+	
+	If intTYP = 2 Then
+		intWYM = 3
+	ElseIf intTYP = 13 Then
+		intWYM = 2
+	ElseIf intTYP = 25 Then
+		intWYM = 3
+	End If
+	
+	Call Rhino.Print("Liczba wymiarów zagadnienia: " & intWYM)
+	
+	'------- LICZBA WĘZŁÓW I ELEMENTÓW
+	
+	Dim intLW 'liczba węzłów
+	Dim intLE 'liczba elementów
+	
+	intLW = UBound(arrWZL)
+	intLE = UBound(arrEL)	
+	
+	'------- WSPÓŁRZĘDNE WĘZŁÓW
+	
+	Dim arrWWZL() 'tablica z punktami
+	Dim arrAPKT' tablica z aktualnym punktem
+	Dim arrTWP()'tekstowe wspołrzędne punktu
+	
+	ReDim arrWWZL(UBound(arrWZL))
+	ReDim arrTWP(UBound(arrWZL))
+	
+	For i=0 To UBound(arrWZL)
+		arrAPKT = Rhino.PointCoordinates(arrWZL(i))
+		arrWWZL(i) = Array(arrAPKT(0), arrAPKT(1), arrAPKT(2))
+		arrTWP(i) = Rhino.Pt2Str(arrWWZL(i), 3, 1)
+		Call Rhino.Print("Współrzędne węzła nr: " & i & " " & arrTWP(i))
+	Next
+	
+	'------- LICZBA STOPNI SWOBODY
+	
+	Dim intLSW 'liczba stopnii swobody w elemencie
+	Dim  intSSW 'suma stopni swobody
+	
+	If intTYP = 2 Then
+		intLSW = 6
+	ElseIf intTYP = 13 Then
+		intLSW = 3
+	ElseIf intTYP = 25 Then
+		intLSW = 6
+	End If
+	
+	Call Rhino.Print("Liczba stopni swobody w elemencie: " & intWYM)
+	
+	intSSW = intLSW * (UBound(arrWZL) + 1)
+
+	Call Rhino.Print("Liczba stopni swobody w modelu: " & intSSW)
+	
+	'------- DEFINIOWANIE PARAMETRÓW ELEMENTÓW SKOŃCZONYCH
+	
+	Dim arrDEL() 'dane elementów (l.p.,typ,początek,koniec)
+	Dim arrPEL 'początek elementu skończonego
+	Dim arrKEL 'koniec elementu skończonego
+	Dim intPEL 'początek elementu skończonego (jako liczba porządkowa)
+	Dim intKEL 'koniec elementu skończonego (jako liczba porządkowa)
+
+	ReDim arrDEL(UBound(arrEL),3)
+	
+	For i=0 To UBound(arrEL)
+		
+		arrPEL = Rhino.CurveStartPoint(arrEL(i))
+		arrKEL = Rhino.CurveEndPoint(arrEL(i))
+		intPEL = Rhino.PointArrayClosestPoint(arrWWZL, arrPEL)
+		intKEL = Rhino.PointArrayClosestPoint(arrWWZL, arrKEL)
+		
+		arrDEL(i, 0) = i + 1
+		arrDEL(i, 1) = intTYP
+		arrDEL(i, 2) = intPEL + 1
+		arrDEL(i, 3) = intKEL + 1
+		
+		Call Rhino.Print("Element belkowy: " & arrDEL(i, 0) & " / " & arrDEL(i, 1) & " / " & arrDEL(i, 2) & " / " & arrDEL(i, 3))
+	
+	Next
+	
+	'------- TWORZENIE PLIKU WSADOWEGO DO AURORA Z88
+	
+	Dim arrPT_STR() 'plik tekstowy ze strukturą
+	Dim intN 'numer wiersza w pliku
+
+	ReDim arrPT_STR(0)
+	arrPT_STR(0) = intWYM & " " & (UBound(arrWZL) + 1) & " " & (UBound(arrEL) + 1) & " " & intSSW & " " & "0" & " " & "#AURORA_V4" 
+	intN = 0
+	
+	For i=0 To UBound(arrWZL)
+		ReDim Preserve arrPT_STR(UBound(arrPT_STR)+1)	
+		intN = intN + 1
+		arrPT_STR(UBound(arrPT_STR)) = intN & " " & intLSW & " " & arrTWP(i)
+	Next
+	
+	intN = 0
+	For i=0 To UBound(arrEL)
+		intN = intN + 1
+		ReDim Preserve arrPT_STR(UBound(arrPT_STR)+1)
+		arrPT_STR(UBound(arrPT_STR)) = arrDEL(i, 0) & " " & arrDEL(i, 1)
+		ReDim Preserve arrPT_STR(UBound(arrPT_STR)+1)
+		arrPT_STR(UBound(arrPT_STR)) = arrDEL(i, 2) & " " & arrDEL(i, 3)
+	Next
+	
+	'------- EKSPORT PLIKU TEKSTOWEGO
+	
+	Dim strNAZWA_B 'nazwa pliku z parametrami po wysokości bezwględnej
+	
+	strNAZWA_B = Rhino.SaveFileName("Zapisz plik parametrów", "Text Files (*.txt)|*.txt||", , "z88structure")
+
+	If Not IsNull(strNAZWA_B) Then
+		Call Rhino.WriteTextFile(strNAZWA_B, arrPT_STR,, 1)
+	End If
+	
+End Sub

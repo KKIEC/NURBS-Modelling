@@ -1,0 +1,1365 @@
+Option Explicit
+'Script written by Krzysztof Kiec
+'Script copyrighted by <insert company name>
+'Script version wtorek, 19 maja 2020
+
+Call Main()
+Sub Main()
+	
+	'------- ZŁAPANIE STATKU
+	
+	Dim ArrS 'tablica zawierająca ID wszystkich obiektów tworzących statek
+	Dim i 'indykator pętli
+	
+	ArrS = Rhino.GetObjects("Zaznacz poszycie statku ", 8 + 16 + 32)
+	For i=0 To UBound(ArrS)
+		Call Rhino.Print("ID obiektu statku nr: " & i & " / " & ArrS(i))
+	Next
+	
+	'------- IDENTYFIKACJA PKT 0,0,0 NA STATKU WZGLĘDEM PRZESTRZENI W MODELU
+
+	Dim arrPR 'Początek układu współrzednych, przeciecie PP i pionu rufowego
+	Dim strOdp1	'odpowiedz na pytanie o wreg
+	Dim blnOdp1 'zakonczenie pętli
+	
+	Do While blnOdp1 = 0
+		strOdp1 = Rhino.GetString("Czy przecięcie PR z PP jest w pkt 0,0,0? (t/n)")
+		If strOdp1 = "t" Then
+			arrPR = Array(0, 0, 0)
+			Call Rhino.Print("Pkt 0,0,0 statku zgodny z 0,0,0 modelu.")
+			blnOdp1 = 1
+		ElseIf strOdp1 = "n" Then
+			arrPR = Rhino.GetPoint("Podaj przecięcie PR z PP ")
+			blnOdp1 = 1
+		Else
+			Call Rhino.Print("Niewłaściwy format odpowiedzi. Użyj t lub n.")
+			blnOdp1 = 0
+		End If
+	Loop
+	
+	'------- TWORZENIE LINII WRĘGU ZEROWEGO
+	
+	Dim strL_WR0 ' linia wręgu 0
+	Dim dblSLW ' szerokość linii wręgowej
+	Dim WR0pp(2) 'punkt początkowy linii wręgowej
+	Dim WR0pk(2) 'punkt końcowy linii wręgowej
+	
+	dblSLW = Rhino.GetReal("Podaj szerokość statku (z zapasem) ")
+	WR0pp(0) = arrPR(0)
+	WR0pp(1) = arrPR(1) - dblSLW / 2
+	WR0pp(2) = arrPR(2)
+	
+	WR0pk(0) = arrPR(0)
+	WR0pk(1) = arrPR(1) + dblSLW / 2
+	WR0pk(2) = arrPR(2)
+	
+	strL_WR0 = Rhino.AddLine(WR0pp, WR0pk)
+	Call Rhino.Print("ID Linii wręgu 0: " & strL_WR0)
+	
+	'------- TWORZENIE WRĘGÓW UJEMNYCH
+	
+	Dim arrWRU 'tablica ID wręgów ujemnych
+	Dim dblOW 'odstęp wręgowy
+	Dim arrWN 'wektor normalny do płaszcyzny offsetowania
+	Dim arrKier 'punkt wskazujący kierunek offsetowania
+	Dim arrIDWU 'ID wręgu ujemnego bieżącego i innych śmieci
+	Dim arrIDWUz() 'Tablica zbiorcza z ID krzywych wręgowych ujemnych
+	Dim strOdp2 'Odpowiedź na pytanie: Czy zakończyć rysowanie linii wręgów ujemnych?
+	Dim blnOdp2 'BOOLEAN Odpowiedź na pytanie: Czy zakończyć rysowanie linii wręgów ujemnych?
+	Dim intN 'Numer aktualnego wręgu (indeks w zmiennej tablicowej)
+	Dim intDPWU 'Długość aktualnego przedziału wręgów ujemnych o jednakowym odstępie wręgowym
+	
+	arrWN = Array(0, 0, 1)
+	arrKier = Array(-100000, 0, 0)
+	intN = 0
+	ReDim Preserve arrIDWUz(intN)
+	arrIDWUz(intN) = strL_WR0
+	Call Rhino.Print("ID krzywej WR0 :" & arrIDWUz(intN))
+
+	Do While blnOdp2 = 0
+		strOdp2 = Rhino.GetString("Czy zakończyć rysowanie wręgów ujemnych? (t/n)")
+		If strOdp2 = "t" Then
+			blnOdp2 = 1
+		ElseIf strOdp2 = "n" Then
+			blnOdp2 = 0
+			intDPWU = Rhino.GetReal("Podaj długość przedziału o jednakowym odstępie wręgowym (wręgi ujemne) ")
+			dblOW = Rhino.GetReal("Podaj odstęp wręgowy (wręgi ujemne) ")
+			i = -intDPWU / dblOW
+			Do While i < 0
+				arrIDWU = Rhino.OffsetCurve(arrIDWUz(intN), arrKier, dblOW, arrWN)
+				intN = intN + 1
+				ReDim Preserve arrIDWUz(intN)
+				arrIDWUz(intN) = arrIDWU(0)
+				Call Rhino.Print("ID offsetowanej krzywej: " & arrIDWUz(intN))
+				ReDim arrIDWU(50)
+				i = i + 1
+			Loop
+			
+		Else
+			Call Rhino.Print("Niewłaściwy format odpowiedzi. Użyj t lub n.")
+			blnOdp2 = 0
+		End If
+	Loop
+	
+	'------- TWORZENIE WRĘGÓW DODATNICH
+	
+	Dim arrWRD 'tablica ID wręgów dodatnich
+	Dim arrIDWD 'ID wręgu dodatniego bieżącego i innych śmieci
+	Dim arrIDWDz() 'Tablica zbiorcza z ID krzywych wręgowych dodatnich
+	Dim strOdp3 'Odpowiedź na pytanie: Czy zakończyć rysowanie linii wręgów dodatnich?
+	Dim blnOdp3 'BOOLEAN Odpowiedź na pytanie: Czy zakończyć rysowanie linii wręgów dodatnich?
+	Dim intDPWD 'Długość aktualnego przedziału wręgów dodatnich o jednakowym odstępie wręgowym
+
+	arrKier = Array(1000000, 0, 0)
+
+	intN = 0
+	ReDim Preserve arrIDWDz(intN)
+	arrIDWDz(intN) = strL_WR0
+	Call Rhino.Print("ID krzywej WR0 " & arrIDWDz(intN))
+
+	Do While blnOdp3 = 0
+		strOdp3 = Rhino.GetString("Czy zakończyć rysowanie wręgów dodatnich? (t/n)")
+		If strOdp3 = "t" Then
+			blnOdp3 = 1
+		ElseIf strOdp3 = "n" Then
+			blnOdp3 = 0
+			intDPWD = Rhino.GetReal("Podaj długość przedziału o jednakowym odstępie wręgowym (wręgi dodatnie) ")
+			dblOW = Rhino.GetReal("Podaj odstęp wręgowy (wręgi dodatnie) ")
+			i = intDPWD / dblOW
+			Do While i > 0
+				arrIDWD = Rhino.OffsetCurve(arrIDWDz(intN), arrKier, dblOW, arrWN)
+				intN = intN + 1
+				ReDim Preserve arrIDWDz(intN)
+				arrIDWDz(intN) = arrIDWD(0)
+				Call Rhino.Print("ID offsetowanej krzywej: " & arrIDWDz(intN))
+				ReDim arrIDWD(50)
+				i = i - 1
+			Loop
+			
+		Else
+			Call Rhino.Print("Niewłaściwy format odpowiedzi. Użyj t lub n.")
+			blnOdp3 = 0
+		End If
+	Loop
+	
+
+	'------- RYSOWANIE LINII PRZECIĘCIA PP I PS
+	
+	Dim arrPSMWU 'Punkt symetrii minimalnego wręgu ujemnego
+	Dim arrPSMWD 'Punkt symetrii maksymalnego wręgu dodatniego
+	Dim strOP 'ID Osi podziałki (przecięcia PP i PS)
+	
+	arrPSMWU = Rhino.CurveMidPoint(arrIDWUz(UBound(arrIDWUz)))
+	arrPSMWD = Rhino.CurveMidPoint(arrIDWDz(UBound(arrIDWDz)))
+	strOP = Rhino.AddLine(arrPSMWU, arrPSMWD)
+	Call Rhino.Print("ID Osi podziałki wręgowej: " & strOP)
+	
+	'------- UPORZĄDKOWANIE WRĘGÓW WG NUMERACJI STATKU
+	
+	Dim arrNWU() 'tablica z numerami wręgów ujemnych WG NUMERACJI STATKU	
+	Dim arrNWD() 'tablica z numerami wręgów dodatnich WG NUMERACJI STATKU
+	Dim intNAW 'numer aktualnego wręgu WG NUMERACJI STATKU
+
+	intN = 0
+	intNAW = 0
+	ReDim Preserve arrNWU(intN)
+	arrNWU(intN) = intNAW
+	
+	Do While UBound(arrNWU) < UBound(arrIDWUz)
+		intNAW = intNAW - 1
+		intN = intN + 1
+		ReDim Preserve arrNWU(intN)
+		arrNWU(intN) = intNAW
+		Call Rhino.Print("Został przypisany nr wręgu: " & arrNWU(intN))
+	Loop
+	
+	intN = 0
+	intNAW = 0
+	ReDim Preserve arrNWD(intN)
+	arrNWD(intN) = intNAW
+	
+	Do While UBound(arrNWD) < UBound(arrIDWDz)
+		intNAW = intNAW + 1
+		intN = intN + 1
+		ReDim Preserve arrNWD(intN)
+		arrNWD(intN) = intNAW
+		Call Rhino.Print("Został przypisany nr wręgu: " & arrNWD(intN))
+	Loop
+	
+	'------- TWORZENIE LINII WODNIC
+	
+	Dim arrLW() 'tablica z odległościami wodnic od PP w kierunku z
+	Dim arrIDLW() 'tablica z ID linii wodnic
+	Dim arrALW' tablica z aktualną linią wodnicy
+	Dim arrOW() 'opisy wodnic
+	Dim blnOdp4 'BOOLEAN odpowiedź na pytanie 4
+	Dim strOdp4 'odpowiedź na pytanie 4
+	Dim arrKier1 'punkt decydujący, po której stronie statku zostaną narysowane wodnice
+	Dim arrLPom' ID linii pomocniczej
+	Dim dblPDLW' połowa długości linii wręgowej
+	Dim arrWNRB'wektor normalny rzutni bocznej
+	Dim arrKier2' punkt decydujący, że wodnice powstaną powyżej PP
+	
+	intN = -1
+
+	arrKier1 = Array(0, 1000, 0)
+	dblPDLW = dblSLW / 2
+	arrLPom = Rhino.OffsetCurve(strOP, arrKier1, dblPDLW, arrWN)
+	Call Rhino.Print("ID linii pomocniczej na rzutni bocznej: " & arrLPom(0))
+	
+	arrWNRB = Array(0, 1, 0)
+	arrKier2 = Array(0, 0, 1000)
+	blnOdp4 = 1
+	
+	Do While blnOdp4 = 1
+		strOdp4 = Rhino.GetString("Czy chcesz dodać następną wodnicę? (t/n)")
+		If strOdp4 = "t" Then
+			blnOdp4 = 1
+			ReDim arrALW(50)
+			intN = intN + 1
+			ReDim Preserve arrLW(intN)
+			ReDim Preserve arrIDLW(intN)
+			ReDim Preserve arrOW(intN)
+			arrLW(intN) = Rhino.GetReal("Podaj wysokość wodnicy od PP ")
+			arrALW = Rhino.OffsetCurve(arrLPom(0), arrKier2, arrLW(intN), arrWNRB)
+			arrIDLW(intN) = arrALW(0)
+			Call Rhino.Print("ID linii wodnicy: " & arrLW(intN) & " od PP: " & arrIDLW(intN))
+			
+		ElseIf strOdp4 = "n" Then
+			blnOdp4 = 0
+		Else
+			Call Rhino.Print("Niewłaściwy format odpowiedzi. Użyj t lub n.")
+			blnOdp4 = 1
+		End If
+	Loop
+	Call Rhino.DeleteObjects(arrLPom)
+	
+	'------- TWORZENIE LINII WZDŁUŻNIC
+	
+	Dim arrLWz() 'tablica z odległościami wzdłużnic od PS w kierunku y
+	Dim arrIDLWz() 'tablica z ID linii wzdłużnic
+	Dim arrALWz' tablica z aktualną linią wzdłużnicy
+	Dim arrOWz() 'opisy wzdłużnic
+	Dim blnOdp5 'BOOLEAN odpowiedź na pytanie 5
+	Dim strOdp5 'odpowiedź na pytanie 5
+	
+	intN = -1
+	
+	arrKier = Array(0, 1000, 0)
+	blnOdp5 = 1
+	
+	Do While blnOdp5 = 1
+		strOdp5 = Rhino.GetString("Czy chcesz dodać następną wzdłużnicę? (t/n)")
+		If strOdp5 = "t" Then
+			blnOdp5 = 1
+			ReDim arrALWz(50)
+			intN = intN + 1
+			ReDim Preserve arrLWz(intN)
+			ReDim Preserve arrIDLWz(intN)
+			ReDim Preserve arrOWz(intN)
+			arrLWz(intN) = Rhino.GetReal("Podaj odległość wzdłużnicy od PS ")
+			arrALWz = Rhino.OffsetCurve(strOP, arrKier, arrLWz(intN), arrWN)
+			arrIDLWz(intN) = arrALWz(0)
+			Call Rhino.Print("ID linii wzdłużnicy: " & arrLWz(intN) & " od PS: " & arrIDLWz(intN))
+			
+		ElseIf strOdp5 = "n" Then
+			blnOdp5 = 0
+		Else
+			Call Rhino.Print("Niewłaściwy format odpowiedzi. Użyj t lub n.")
+			blnOdp5 = 1
+		End If
+	Loop
+	
+	'------- WYŁĄCZANIE ODŚWIEŻANIA EKRANU
+	
+	Call Rhino.EnableRedraw(0)
+	
+	'------- TWORZENIE PŁASZCZYZN WRĘGOWYCH
+	
+	Dim arrPWU()'Płaszczyzny wręgów ujemnych
+	Dim arrPWD()'Płaszczyzny wręgów dodatnich
+	Dim strAPW 'Aktualna płaszczyzna wręgowa
+	Dim dblH 'Wysokość statku (później wysokość powierzchni wręgowych)
+	
+	dblH = Rhino.GetReal("Podaj wysokość statku ")
+	dblH = dblH + 11000
+	
+	ReDim Preserve arrPWU(0)
+	intN = -1
+	
+	Do While UBound(arrPWU) < UBound(arrIDWUz)
+		intN = intN + 1
+		ReDim Preserve arrPWU(intN)
+		arrIDWUz(intN) = Rhino.MoveObject(arrIDWUz(intN), Array(0, 0, 0), Array(0, 0, -10000))
+		strAPW = Rhino.ExtrudeCurveStraight(arrIDWUz(intN), Array(0, 0, 0), Array(0, 0, dblH))	
+		arrIDWUz(intN) = Rhino.MoveObject(arrIDWUz(intN), Array(0, 0, 0), Array(0, 0, 10000))
+		arrPWU(intN) = strAPW
+		Call Rhino.Print("ID płaszczyzny wręgu: " & arrNWU(intN) & " / " & arrPWU(intN))
+	Loop
+	
+	ReDim Preserve arrPWD(0)
+	intN = -1
+	
+	Do While UBound(arrPWD) < UBound(arrIDWDz)
+		intN = intN + 1
+		ReDim Preserve arrPWD(intN)
+		arrIDWDz(intN) = Rhino.MoveObject(arrIDWDz(intN), Array(0, 0, 0), Array(0, 0, -10000))
+		strAPW = Rhino.ExtrudeCurveStraight(arrIDWDz(intN), Array(0, 0, 0), Array(0, 0, dblH))	
+		arrIDWDz(intN) = Rhino.MoveObject(arrIDWDz(intN), Array(0, 0, 0), Array(0, 0, 10000))
+		arrPWD(intN) = strAPW
+		Call Rhino.Print("ID płaszczyzny wręgu: " & arrNWD(intN) & " / " & arrPWD(intN))
+	Loop
+	
+	dblH = dblH - 10000
+	
+	'------- TWORZENIE PŁASZCZYZN WODNICOWYCH
+	
+	Dim arrPWo()'Płaszczyzny wodnicowe
+	Dim strAPWo 'Aktualna płaszczyzna wodnicowa
+	
+	ReDim Preserve arrPWo(0)
+	intN = -1
+	
+	Do While UBound(arrPWo) < UBound(arrIDLW)
+		intN = intN + 1
+		ReDim Preserve arrPWo(intN)
+		strAPWo = Rhino.ExtrudeCurveStraight(arrIDLW(intN), Array(0, 0, 0), Array(0, -dblSLW, 0))	
+		arrPWo(intN) = strAPWo
+		Call Rhino.Print("ID płaszczyzny wodnicy: " & arrLW(intN) & " od PP / " & arrPWo(intN))
+	Loop
+	
+	'------- TWORZENIE PŁASZCZYZN WZDŁUŻNICOWYCH
+	
+	Dim arrPWz()'Płaszczyzny wzdłużnicowe
+	Dim strAPWz 'Aktualna płaszczyzna wzdłużnicowa
+	
+	ReDim Preserve arrPWz(0)
+	intN = -1
+	
+	Do While UBound(arrPWz) < UBound(arrIDLWz)
+		intN = intN + 1
+		ReDim Preserve arrPWz(intN)
+		strAPWz = Rhino.ExtrudeCurveStraight(arrIDLWz(intN), Array(0, 0, 0), Array(0, 0, dblH))	
+		arrPWz(intN) = strAPWz
+		Call Rhino.Print("ID płaszczyzny wzdłużnicy: " & arrLWz(intN) & " od PS / " & arrPWz(intN))
+	Loop	
+	
+	'------- TWORZENIE WRĘGOWNIC
+	
+	'Najpierw przecina się kolejno każdy element statku z daną płaszczyzną wręgu
+	'Później łączy się otrzymane przecięcia
+	
+	Dim arrAWrP 'tablica z aktualną przecięciem płaszyzny wręgowej z i-tym elementem statku
+	Dim arrPAWrP 'tablica z połączonymi przecięciami (po komendzie JoinCurves)
+	Dim arrAWr 'tablica z aktualną wręgownicą
+	Dim arrWrgU() 'tablica z wręgownicami ujemnymi (jako warstwy)
+	Dim arrWrgD() 'tablica z wręgownicami dodatnimi
+	Dim arrBIPom() 'tablica pomocnicza do przecięć
+	Dim arrBIPomU() 'tablica pomocnicza do przecięc uporządkowana tj. bez zerowych elementów
+	Dim j 'indykator pętli
+	Dim strZP 'zmienna pomocnicza
+	
+	'WRĘGOWNICE UJEMNE
+	
+	ReDim Preserve arrWrgU(0)
+	ReDim arrBIPom(0)
+	intN = -1
+		
+	Do While UBound(arrWrgU) < UBound(arrIDWUz)
+		intN = intN + 1
+		ReDim Preserve arrWrgU(intN)
+		arrWrgU(intN) = Rhino.AddLayer("WR " & arrNWU(intN), RGB(255, 0, 0))
+		Call Rhino.CurrentLayer(arrWrgU(intN))
+		
+		For i=0 To UBound(arrS)
+			arrAWrP = Rhino.IntersectBreps(arrS(i), arrPWU(intN))
+			If  IsArray(arrAWrP) Then
+				arrPAWrP = Rhino.JoinCurves(arrAWrP, 1)
+				ReDim Preserve arrBIPom(i)
+				arrBIPom(i) = arrPAWrP(0)
+				Call Rhino.Print("ID obiektu przecięcia elemntu nr: " & i & " z wręgiem nr: " & arrNWU(intN) & " / " & arrBIPom(i))
+			End If
+			ReDim arrAWrP(50)
+			ReDim arrPAWrP(50)
+		Next
+		
+		ReDim arrBIPomU(0)
+		j = 0
+		For i=0 To UBound(arrBIPom)
+			strZP = arrBIPom(i)
+			If VarType(strZP) = vbString Then
+				ReDim Preserve arrBIPomU(j)
+				arrBIPomU(j) = arrBIPom(i)
+				j = j + 1
+			End If
+		Next
+		
+		arrAWr = Rhino.JoinCurves(arrBIpomU, 1)
+		If Not IsNull(arrAWr) Then
+			Call Rhino.Print("ID wręgownicy nr: " & arrNWU(intN) & " / " & arrWrgU(intN)) 
+		End If
+		ReDim arrAWr(50)
+		
+	Loop
+	
+	'WRĘGOWNICE DODATNIE
+	
+	ReDim Preserve arrWrgD(0)
+	ReDim arrBIPom(0)
+	
+	intN = -1
+		
+	Do While UBound(arrWrgD) < UBound(arrIDWDz)
+		intN = intN + 1
+		ReDim Preserve arrWrgD(intN)
+		arrWrgD(intN) = Rhino.AddLayer("WR" & arrNWD(intN), RGB(255, 0, 0))
+		Call Rhino.CurrentLayer(arrWrgD(intN))
+		
+		For i=0 To UBound(arrS)
+			arrAWrP = Rhino.IntersectBreps(arrS(i), arrPWD(intN))
+			If IsArray(arrAWrP) Then
+				arrPAWrP = Rhino.JoinCurves(arrAWrP, 1)
+				ReDim Preserve arrBIPom(i)
+				arrBIPom(i) = arrPAWrP(0)
+				Call Rhino.Print("ID obiektu przecięcia elementu nr: " & i & " z wręgiem nr: " & arrNWD(intN) & " / " & arrBIPom(i))
+			End If
+			ReDim arrAWrP(50)
+			ReDim arrPAWrP(50)
+		Next
+		
+		ReDim arrBIPomU(0)
+		j = 0
+		For i=0 To UBound(arrBIPom)
+			strZP = arrBIPom(i)
+			If VarType(strZP) = vbString Then
+				ReDim Preserve arrBIPomU(j)
+				arrBIPomU(j) = arrBIPom(i)
+				j = j + 1
+			End If
+		Next
+		
+		arrAWr = Rhino.JoinCurves(arrBIpomU, 1)
+		If Not IsNull(arrAWr) Then
+			Call Rhino.Print("ID wręgownicy nr: " & arrNWD(intN) & " / " & arrWrgD(intN)) 
+		End If
+		ReDim arrAWr(50)
+		
+	Loop
+	
+	'------- USUNIĘCIE PŁASZCZYZN WRĘGOWYCH
+	
+	j = 0
+	For i=0 To UBound(arrPWU)
+		strZP = arrPWU(i)
+		If VarType(strZP) = vbString Then
+			Call Rhino.DeleteObjects(arrPWU)
+			j = j + 1
+		End If
+	Next	
+	
+	j = 0
+	For i=0 To UBound(arrPWD)
+		strZP = arrPWD(i)
+		If VarType(strZP) = vbString Then
+			Call Rhino.DeleteObjects(arrPWD)
+			j = j + 1
+		End If
+	Next	
+	
+	'------- TWORZENIE WODNIC
+	
+	Dim arrAWoP 'tablica z aktualną przecięciem płaszyzny wodnicowej z i-tym elementem statku
+	Dim arrPAWoP 'tablica z połączonymi przecięciami (po komendzie JoinCurves)
+	Dim arrAWo 'tablica z aktualną wodnicą
+	Dim arrWo() 'tablica z wodnicami (jako warstwy)
+	Dim arrBIPom1()'tablica pomocnicza do przecięć
+	Dim arrBIPom1U()'tablica pomocnicza do przecięć uporządkowana tj. bez zerowych elementów
+	Dim blnILE' zmienna boolowska do sprawdzenia funkcji IsLayerEmpty
+	
+	ReDim Preserve arrWo(0)
+	ReDim arrBiPom1(0)
+	intN = -1
+		
+	Do While UBound(arrWo) < UBound(arrPWo)
+		intN = intN + 1
+		ReDim Preserve arrWo(intN)
+		arrWo(intN) = Rhino.AddLayer("Wodnica " & arrLW(intN) & " od PP", RGB(255, 0, 0))
+		Call Rhino.CurrentLayer(arrWo(intN))
+		
+		For i=0 To UBound(arrS)
+			arrAWoP = Rhino.IntersectBreps(arrS(i), arrPWo(intN))
+			If IsArray(arrAWoP) Then
+				arrPAWoP = Rhino.JoinCurves(arrAWoP, 1)
+				ReDim Preserve arrBIPom1(i)
+				arrBIPom1(i) = arrPAWoP(0)
+				Call Rhino.Print("ID obiektu przecięcia elementu nr: " & i & " z wodnicą: " & arrLW(intN) & " od PP / " & arrBIPom1(i))
+			End If
+			ReDim arrAWoP(50)
+			ReDim arrPAWoP(50)
+		Next
+		
+		ReDim arrBIPom1U(0)
+		j = 0
+		For i=0 To UBound(arrBIPom1)
+			strZP = arrBIPom1(i)
+			If VarType(strZP) = vbString Then
+				ReDim Preserve arrBIPom1U(j)
+				arrBIPom1U(j) = arrBIPom1(i)
+				j = j + 1
+			End If
+		Next
+		
+		blnILE = Rhino.IsLayerEmpty(arrWo(intN))
+		If blnILE = 0 Then
+			arrAWo = Rhino.JoinCurves(arrBIpom1U, 1)
+		End If
+		If Not IsNull(arrAWo) Then
+			Call Rhino.Print("ID wodnicy: " & arrLW(intN) & " od PP / " & arrWo(intN)) 
+		End If
+		ReDim arrAWo(50)
+		
+	Loop
+	
+	'------- USUNIĘCIE PŁASZCZYZN WODNICOWYCH
+	
+	Call Rhino.DeleteObjects(arrPWo)
+	
+	'------- TWORZENIE WZDŁUŻNIC
+	
+	Dim arrAWzP 'tablica z aktualną przecięciem płaszyzny wzdłużnicowej z i-tym elementem statku
+	Dim arrPAWzP 'tablica z połączonymi przecięciami (po komendzie JoinCurves)
+	Dim arrAWz 'tablica z aktualną wzdłużnicą
+	Dim arrWz() 'tablica ze wzdłużnicami (jako warstwy)
+	Dim arrBIPom2()'tablica pomocnicza do przecięć
+	Dim arrBIPom2U()'tablica pomocnicza do przecięć uporządkowana tj. bez zerowych elementów
+	
+	ReDim Preserve arrWz(0)
+	ReDim arrBiPom2(0)
+	intN = -1
+		
+	Do While UBound(arrWz) < UBound(arrPWz)
+		intN = intN + 1
+		ReDim Preserve arrWz(intN)
+		arrWz(intN) = Rhino.AddLayer("Wzdłużnica " & arrLWz(intN) & " od PS", RGB(255, 0, 0))
+		Call Rhino.CurrentLayer(arrWz(intN))
+		
+		For i=0 To UBound(arrS)
+			arrAWzP = Rhino.IntersectBreps(arrS(i), arrPWz(intN))
+			If IsArray(arrAWzP) Then
+				arrPAWzP = Rhino.JoinCurves(arrAWzP, 1)
+				ReDim Preserve arrBIPom2(i)
+				arrBIPom2(i) = arrPAWzP(0)
+				Call Rhino.Print("ID obiektu przecięcia elementu nr: " & i & " ze wzdłużnicą: " & arrLWz(intN) & " od PP / " & arrBIPom2(i))
+			End If
+			ReDim arrAWzP(50)
+			ReDim arrPAWzP(50)
+		Next
+		
+		ReDim arrBIPom2U(0)
+		j = 0
+		For i=0 To UBound(arrBIPom2)
+			strZP = arrBIPom2(i)
+			If VarType(strZP) = vbString Then
+				ReDim Preserve arrBIPom2U(j)
+				arrBIPom2U(j) = arrBIPom2(i)
+				j = j + 1
+			End If
+		Next
+		
+		blnILE = Rhino.IsLayerEmpty(arrWz(intN))
+		If blnILE = 0 Then
+			arrAWz = Rhino.JoinCurves(arrBIpom2U, 1)
+		End If
+		If Not IsNull(arrAWz) Then
+			Call Rhino.Print("ID wodnicy: " & arrLWz(intN) & " od PP / " & arrWz(intN)) 
+		End If
+		ReDim arrAWz(50)
+		
+	Loop
+	
+	'------- USUNIĘCIE PŁASZCZYZN WZDŁUŻNICOWYCH
+	
+	Call Rhino.DeleteObjects(arrPWz)
+	
+	'------- PRZESUNIĘCIE WRĘGOWNIC UJEMNYCH NA RZUTNIĘ
+	
+	Dim arrPSLW 'punkt symetrii linii wręgowej
+	Dim arrMTW (3,3) 'macierz transformacji wręgownic
+	Dim dblPSLWx 'współrzędna x punktu symetrii linii wręgowej
+	Dim dblPSLWy 'współrzędna y punktu symetrii linii wręgowej
+	Dim dblPSLWz 'współrzędna z punktu symetrii linii wręgowej
+	Dim arrPO 'tablica przenoszonych obiektów
+	
+	intN = -1
+	
+	If UBound(arrIDWUz) > 0 Then
+	Do While intN < UBound(arrIDWUz)	
+
+		intN = intN + 1
+		arrPSLW = Rhino.CurveMidPoint(arrIDWUz(intN))
+			
+		dblPSLWx = arrPSLW(0)
+		dblPSLWy = arrPSLW(1)
+		dblPSLWz = arrPSLW(2)
+		
+		Call Rhino.Print("Punkt symetrii linii wręgu: " & arrNWU(intN) & "-ego: " & dblPSLWx & " , " & dblPSLWy & " , " & dblPSLWz)
+		
+		arrMTW(0, 0) = 1: arrMTW(0, 1) = 0: arrMTW(0, 2) = 0: arrMTW(0, 3) = (arrPSMWD(0) - dblPSLWx)
+		arrMTW(1, 0) = 0: arrMTW(1, 1) = 1: arrMTW(1, 2) = 0: arrMTW(1, 3) = (arrPSMWD(1) - dblPSLWy)
+		arrMTW(2, 0) = 0: arrMTW(2, 1) = 0: arrMTW(2, 2) = 1: arrMTW(2, 3) = (arrPSMWD(2) - dblPSLWz)
+		arrMTW(3, 0) = 0: arrMTW(3, 1) = 0: arrMTW(3, 2) = 0: arrMTW(3, 3) = 1
+		
+			arrPO = Rhino.ObjectsByLayer(arrWrgU(intN))
+		
+		If Not IsNull(arrPO) Then
+			Call Rhino.TransformObjects(arrPO, arrMTW, False)
+			Call Rhino.Print("ID transformowanego na rzutnię wręgu nr: " & arrNWU(intN) & " / " & arrWrgU(intN))
+		End If
+		ReDim arrPSLW(2)
+		
+		Loop
+	End If
+	
+	'------- PRZESUNIĘCIE WRĘGOWNIC DODATNICH NA RZUTNIĘ
+		
+	intN = -1 
+	
+	Do While intN < UBound(arrIDWDz)	
+
+		intN = intN + 1
+		arrPSLW = Rhino.CurveMidPoint(arrIDWDz(intN))
+			
+		dblPSLWx = arrPSLW(0)
+		dblPSLWy = arrPSLW(1)
+		dblPSLWz = arrPSLW(2)
+		
+		Call Rhino.Print("Punkt symetrii linii wręgu: " & arrNWD(intN) & "-ego: " & dblPSLWx & " , " & dblPSLWy & " , " & dblPSLWz)
+		
+		arrMTW(0, 0) = 1: arrMTW(0, 1) = 0: arrMTW(0, 2) = 0: arrMTW(0, 3) = (arrPSMWD(0) - dblPSLWx)
+		arrMTW(1, 0) = 0: arrMTW(1, 1) = 1: arrMTW(1, 2) = 0: arrMTW(1, 3) = (arrPSMWD(1) - dblPSLWy)
+		arrMTW(2, 0) = 0: arrMTW(2, 1) = 0: arrMTW(2, 2) = 1: arrMTW(2, 3) = (arrPSMWD(2) - dblPSLWz)
+		arrMTW(3, 0) = 0: arrMTW(3, 1) = 0: arrMTW(3, 2) = 0: arrMTW(3, 3) = 1
+		
+		arrPO = Rhino.ObjectsByLayer(arrWrgD(intN))
+		If Not IsNull(arrPO) Then
+			Call Rhino.TransformObjects(arrPO, arrMTW, False)
+			Call Rhino.Print("ID transformowanego na rzutnię wręgu nr: " & arrNWD(intN) & " / " & arrWrgD(intN))
+		End If
+		ReDim arrPSLW(2)
+		
+	Loop
+	
+	'------- PRZESUNIĘCIE WODNIC NA RZTUNIĘ
+		
+	intN = -1
+	
+	Do While intN < UBound(arrWo)	
+
+		intN = intN + 1	
+		
+		arrMTW(0, 0) = 1: arrMTW(0, 1) = 0: arrMTW(0, 2) = 0: arrMTW(0, 3) = 0
+		arrMTW(1, 0) = 0: arrMTW(1, 1) = 1: arrMTW(1, 2) = 0: arrMTW(1, 3) = 0
+		arrMTW(2, 0) = 0: arrMTW(2, 1) = 0: arrMTW(2, 2) = 1: arrMTW(2, 3) = (0 - arrLW(intN))
+		arrMTW(3, 0) = 0: arrMTW(3, 1) = 0: arrMTW(3, 2) = 0: arrMTW(3, 3) = 1
+		
+		arrPO = Rhino.ObjectsByLayer(arrWo(intN))
+		blnILE = Rhino.IsLayerEmpty(arrWo(intN))
+		If blnILE = 0 Then
+			Call Rhino.TransformObjects(arrPO, arrMTW, False)
+			Call Rhino.Print("ID transformowanej na rzutnię wodnicy: " & arrLW(intN) & " od PP / " & arrWo(intN))
+		End If
+	Loop
+	
+	'------- PRZESUNIĘCIE WZDŁUŻNIC NA RZUTNIĘ
+		
+	intN = -1
+	
+	Do While intN < UBound(arrWz)	
+
+		intN = intN + 1	
+		
+		arrMTW(0, 0) = 1: arrMTW(0, 1) = 0: arrMTW(0, 2) = 0: arrMTW(0, 3) = 0
+		arrMTW(1, 0) = 0: arrMTW(1, 1) = 1: arrMTW(1, 2) = 0: arrMTW(1, 3) = (dblPDLW - arrLWz(intN))
+		arrMTW(2, 0) = 0: arrMTW(2, 1) = 0: arrMTW(2, 2) = 1: arrMTW(2, 3) = 0
+		arrMTW(3, 0) = 0: arrMTW(3, 1) = 0: arrMTW(3, 2) = 0: arrMTW(3, 3) = 1
+		
+		arrPO = Rhino.ObjectsByLayer(arrWz(intN))
+		blnILE = Rhino.IsLayerEmpty(arrWz(intN))
+		If blnILE = 0 Then
+			Call Rhino.TransformObjects(arrPO, arrMTW, False)
+			Call Rhino.Print("ID transformowanej na rzutnię wzdłużnicy: " & arrLWz(intN) & " od PS / " & arrWz(intN))
+		End If
+	Loop
+	
+	
+	'------- OBRÓT WRĘGÓW DZIOBOWYCH NA PRAWĄ STRONĘ RZUTNI BOCZNEJ (LUSTRO)
+
+	Dim dblOWRx 'współrzędna x owręża (jako punkt podziału na wręgi dodatnie i ujemne)
+	Dim arrTPSLW() 'tablica z punktami symetrii linii wręgowych
+	Dim arrO_PSLW_PR() 'tablica z odległościami punktu symetrii linii wręgowej od początku układu współrzędnych
+	
+	dblOWRx = Rhino.GetReal("Podaj współrzędną x miejsca podziału na wręgi rufowe i dziobowe ")
+	
+	intN = -1
+	ReDim arrTPSLW(0)
+	
+	Do While intN < UBound(arrIDWDz)
+	
+		intN = intN + 1
+		ReDim Preserve arrTPSLW(intN)
+		ReDim Preserve arrO_PSLW_PR(intN)
+		arrTPSLW(intN) = Rhino.CurveMidPoint(arrIDWDz(intN))
+		arrO_PSLW_PR(intN) = Rhino.Distance(arrTPSLW(intN), arrPR)
+	
+		If arrO_PSLW_PR(intN) >= dblOWRx Then
+		
+			arrPO = Rhino.ObjectsByLayer(arrWrgD(intN))
+			blnILE = Rhino.IsLayerEmpty(arrWrgD(intN))
+			
+			If blnILE = 0 Then
+				Call Rhino.RotateObjects(arrPO, arrPSMWD, 180, Array(0, 0, 1))
+				Call Rhino.Print("ID obróconego wręgu dziobowego nr: " & arrNWD(intN) & " / " & arrWrgD(intN))
+			End If
+			
+		End If
+	Loop
+	
+	'------- TWORZENIE SIATKI NA RZUTNIACH	
+	
+	'RZUTNIA GÓRA
+	
+	Dim strWsiRG 'Warstwa siatki rzutnia górna
+	Dim arrTPPL() 'tablica pomocnicza pkt początkowego linii
+	Dim arrTPKL() 'tablica pomocnicza punktu końcowego linii
+	Dim arrTPPP() 'tablica pomocnicza pomocniczego punktu
+	
+	strWsiRG = Rhino.AddLayer("Siatka Rzutnia Górna", RGB(128, 128, 128))
+	Call Rhino.CurrentLayer(strWsiRG)
+	
+	Call Rhino.DeleteObject(strOP) 'kasowanie starej osi
+	strOP = Rhino.AddLine(arrPSMWU, arrPSMWD) 'tworzenie osi na warstwie siatka
+	
+	intN = -1
+	ReDim arrTPPL(0)
+	ReDim arrTPKL(0)
+	
+	Do While intN < UBound(arrIDWUz)
+		intN = intN + 1
+		ReDim Preserve arrTPPL(intN)
+		ReDim Preserve arrTPKL(intN)
+		
+		arrTPPL(intN) = Rhino.CurveMidPoint(arrIDWUz(intN))
+		arrTPKL(intN) = Rhino.CurveEndPoint(arrIDWUz(intN))
+		Call Rhino.DeleteObject(arrIDWUz(intN))
+		arrIDWUz(intN) = Rhino.AddLine(arrTPPL(intN), arrTPKL(intN))
+		Call Rhino.Print("Linia siatki wręgu ujemnego nr: " & arrNWU(intN) & " / " & arrIDWUz(intN))
+		
+	Loop
+	
+	intN = 0
+	ReDim arrTPPL(0)
+	ReDim arrTPKL(0)
+	
+	Do While intN < UBound(arrIDWDz)
+		intN = intN + 1
+		ReDim Preserve arrTPPL(intN)
+		ReDim Preserve arrTPKL(intN)
+		
+		arrTPPL(intN) = Rhino.CurveMidPoint(arrIDWDz(intN))
+		arrTPKL(intN) = Rhino.CurveEndPoint(arrIDWDz(intN))
+		Call Rhino.DeleteObject(arrIDWDz(intN))
+		arrIDWDz(intN) = Rhino.AddLine(arrTPPL(intN), arrTPKL(intN))
+		Call Rhino.Print("Linia siatki wręgu dodatniego nr: " & arrNWD(intN) & " / " & arrIDWDz(intN))
+		
+	Loop
+	
+	intN = -1
+	ReDim arrTPPL(0)
+	ReDim arrTPKL(0)
+	
+	Do While intN < UBound(arrIDLWz)
+		intN = intN + 1
+		ReDim Preserve arrTPPL(intN)
+		ReDim Preserve arrTPKL(intN)
+		
+		arrTPPL(intN) = Rhino.CurveStartPoint(arrIDLWz(intN))
+		arrTPKL(intN) = Rhino.CurveEndPoint(arrIDLWz(intN))
+		Call Rhino.DeleteObject(arrIDLWz(intN))
+		arrIDLWz(intN) = Rhino.AddLine(arrTPPL(intN), arrTPKL(intN))
+		Call Rhino.Print("Linia siatki wzdłużnicy: " & arrLWz(intN) & " od PS/ " & arrIDLWz(intN))
+		
+	Loop
+	
+	arrLPom = Rhino.OffsetCurve(strOP, Array(0, 1000, 0), dblPDLW, arrWN)
+	
+	'RZUTNIA BURTA	
+	Dim strWsiRB 'Warstwa siatki rzutnia burta
+	Dim arrLPom1 'Linia pomocnicza w z=0
+	Dim arrLPom2 'Linia pomocnicza w z=h statku
+	Dim arrLSRBWU() 'Linie siatki rzutnia burta wręgi ujemne
+	Dim arrLSRBWD() 'Linie siatki rzutnia burta wręgi dodatnie
+	
+	strWsiRB = Rhino.AddLayer("Siatka Rzutnia Burta", RGB(128, 128, 128))
+	Call Rhino.CurrentLayer(strWsiRB)
+	
+	ReDim arrTPPL(0)
+	ReDim arrTPKL(0)
+	
+	arrTPPL(0) = Rhino.CurveEndPoint(arrIDWUz(UBound(arrIDWUz)))
+	arrTPKL(0) = Rhino.CurveEndPoint(arrIDWDz(UBound(arrIDWDz)))
+	
+	arrLPom1 = Rhino.AddLine(arrTPPL(0), arrTPKL(0))
+	arrLPom2 = Rhino.OffsetCurve(arrLPom1, Array(0, 0, 1000), dblH, arrWNRB)
+	
+	intN = -1
+	ReDim arrTPPL(0)
+	ReDim arrTPKL(0)
+	
+	Do While intN < UBound(arrIDLW)
+		intN = intN + 1
+		ReDim Preserve arrTPPL(intN)
+		ReDim Preserve arrTPKL(intN)
+		arrTPPL(intN) = Rhino.CurveStartPoint(arrIDLW(intN))
+		arrTPKL(intN) = Rhino.CurveEndPoint(arrIDLW(intN))
+		Call Rhino.DeleteObject(arrIDLW(intN))
+		arrIDLW(intN) = Rhino.AddLine(arrTPPL(intN), arrTPKL(intN))
+		Call Rhino.Print("Linia siatki wodnicy: " & arrLW(intN) & " od PP " & arrIDLW(intN))
+		
+	Loop
+	
+	intN = -1
+	ReDim arrTPPL(0)
+	ReDim arrTPKL(0)
+	
+	Do While intN < UBound(arrIDWUz)
+		intN = intN + 1
+		ReDim Preserve arrTPPL(intN)
+		ReDim Preserve arrTPKL(intN)
+		ReDim Preserve arrLSRBWU(intN)
+		
+		arrTPPL(intN) = Rhino.CurveEndPoint(arrIDWUz(intN))
+		arrTPKL(intN) = Array(arrTPPL(intN)(0), arrTPPL(intN)(1), dblH)
+		arrLSRBWU(intN) = Rhino.AddLine(arrTPPL(intN), arrTPKL(intN))
+		Call Rhino.Print("Linia siatki wręgu ujemnego nr: " & arrNWU(intN) & " / " & arrLSRBWU(intN))
+		
+	Loop
+	
+	intN = 0
+	ReDim arrTPPL(0)
+	ReDim arrTPKL(0)
+	
+	Do While intN < UBound(arrIDWDz)
+		intN = intN + 1
+		ReDim Preserve arrTPPL(intN)
+		ReDim Preserve arrTPKL(intN)
+		ReDim Preserve arrLSRBWD(intN)
+		
+		arrTPPL(intN) = Rhino.CurveEndPoint(arrIDWDz(intN))
+		arrTPKL(intN) = Array(arrTPPL(intN)(0), arrTPPL(intN)(1), dblH)
+		arrLSRBWD(intN) = Rhino.AddLine(arrTPPL(intN), arrTPKL(intN))
+		Call Rhino.Print("Linia siatki wręgu dodatniego nr: " & arrNWD(intN) & " / " & arrLSRBWD(intN))
+		
+	Loop
+	
+	'RZUTNIA DZIÓB	
+	Dim strWsiDB 'Warstwa siatki rzutnia dziób
+	Dim arrLPom3 'Linia pomocnicza w y=0
+	Dim arrLPom4 'Linia pomocnicza w y=-B statku
+	Dim arrLPom5 'Linia pomocnicza w y=B statku
+	Dim arrLPom6 'Linia pomocnicza w z=0 statku
+	Dim arrLPom7 'Linia pomocnicza w z=h statku
+	Dim arrWNRDB 'wektor normalny rzutni dziób
+	Dim arrLSRDB_LB_Pio() 'Linie siatki rzutnia dziób lewa burta, pionowa
+	Dim arrLSRDB_PB_Pio() 'Linie siatki rzutnia dziób prawa burta, pionowa
+	Dim arrLSRDB_Poz() 'Linie siatki rzutnia dziób, pozioma
+	
+	arrWNRDB = Array(1, 0, 0)
+
+	strWsiDB = Rhino.AddLayer("Siatka Rzutnia Dziób", RGB(128, 128, 128))
+	Call Rhino.CurrentLayer(strWsiDB)
+	
+	ReDim arrTPPL(0)
+	ReDim arrTPKL(0)
+	
+	arrTPPL(0) = Rhino.CurveEndPoint(strOP)
+	arrTPKL(0) = Array(arrTPPL(0)(0), arrTPPL(0)(1), dblH)
+	
+	arrLPom3 = Rhino.AddLine(arrTPPL(0), arrTPKL(0))
+	arrLPom4 = Rhino.OffsetCurve(arrLPom3, Array(0, -1000, 0), dblPDLW, arrWNRDB)
+	arrLPom5 = Rhino.OffsetCurve(arrLPom3, Array(0, 1000, 0), dblPDLW, arrWNRDB)
+	
+	ReDim arrTPPL(0)
+	ReDim arrTPKL(0)
+	
+	arrTPPL(0) = Rhino.CurveStartPoint(arrLPom4(0))
+	arrTPKL(0) = Rhino.CurveStartPoint(arrLPom5(0))
+	arrLPom6 = Rhino.AddLine(arrTPPL(0), arrTPKL(0))
+	
+	ReDim arrTPPL(0)
+	ReDim arrTPKL(0)
+	
+	arrTPPL(0) = Rhino.CurveEndPoint(arrLPom4(0))
+	arrTPKL(0) = Rhino.CurveEndPoint(arrLPom5(0))
+	arrLPom7 = Rhino.AddLine(arrTPPL(0), arrTPKL(0))
+	
+	intN = -1
+	ReDim arrTPPL(0)
+	ReDim arrTPKL(0)
+	
+	Do While intN < UBound(arrIDLWz)
+		intN = intN + 1
+		ReDim Preserve arrTPPL(intN)
+		ReDim Preserve arrTPKL(intN)
+		ReDim Preserve arrLSRDB_LB_Pio(intN)
+		
+		arrTPPL(intN) = Rhino.CurveEndPoint(arrIDLWz(intN))
+		arrTPKL(intN) = Array(arrTPPL(intN)(0), arrTPPL(intN)(1), dblH)
+		arrLSRDB_LB_Pio(intN) = Rhino.AddLine(arrTPPL(intN), arrTPKL(intN))
+		Call Rhino.Print("Linia siatki wzdłużnicy: " & arrLWz(intN) & " / " & arrLSRDB_LB_Pio(intN))
+		
+	Loop
+	
+	intN = -1
+	ReDim arrTPPL(0)
+	ReDim arrTPKL(0)
+	
+	Do While intN < UBound(arrIDLWz)
+		intN = intN + 1
+		ReDim Preserve arrTPPL(intN)
+		ReDim Preserve arrTPKL(intN)
+		ReDim Preserve arrTPPP(intN)
+		ReDim Preserve arrLSRDB_PB_Pio(intN)
+		
+		arrTPPP(intN) = Rhino.CurveEndPoint(arrIDLWz(intN))
+		arrTPPL(intN) = Array(arrTPPP(intN)(0), -arrTPPP(intN)(1), arrTPPP(intN)(2))
+		arrTPKL(intN) = Array(arrTPPL(intN)(0), arrTPPL(intN)(1), dblH)
+		arrLSRDB_PB_Pio(intN) = Rhino.AddLine(arrTPPL(intN), arrTPKL(intN))
+		Call Rhino.Print("Linia siatki wzdłużnicy: " & arrLWz(intN) & " od PS/ " & arrLSRDB_PB_Pio(intN))
+		
+	Loop
+	
+	intN = -1
+	ReDim arrTPPL(0)
+	ReDim arrTPKL(0)
+	
+	Do While intN < UBound(arrIDLW)
+		intN = intN + 1
+		ReDim Preserve arrTPPL(intN)
+		ReDim Preserve arrTPKL(intN)
+		ReDim Preserve arrLSRDB_Poz(intN)
+		
+		arrTPPL(intN) = Rhino.CurveEndPoint(arrIDLW(intN))
+		arrTPKL(intN) = Array(arrTPPL(intN)(0), -arrTPPL(intN)(1), arrTPPL(intN)(2))
+		arrLSRDB_Poz(intN) = Rhino.AddLine(arrTPPL(intN), arrTPKL(intN))
+		Call Rhino.Print("Linia siatki wodnicy: " & arrLW(intN) & " od PP/ " & arrLSRDB_Poz(intN))
+		
+	Loop
+
+	'------- TWORZENIE PODPISÓW LINII SIATKI
+	
+	Dim strWPsiRG 'Warstwa podpisów siatki siatki rzutnia górna
+	Dim arrWPsiRG_WU() 'tablica ID podpisów wręgów ujmenych, rzutnia góra
+	Dim arrWPsiRG_WD() 'tablica ID podpisów wręgów dodatnich, rzutnia góra
+	Dim arrWPsiRG_WzP() 'tablica ID podpisów wzdłużnicy na początku, rzutnia góra
+	Dim arrWPsiRG_WzK() 'tablica ID podpisów wzdłużnicy na końcu, rzutnia góra
+	Dim strWPsiRB 'Warstwa podpisów siatki siatki rzutnia burta
+	Dim arrWPsiRB_WU() 'tablica ID podpisów wręgów ujmenych, rzutnia burta
+	Dim arrWPsiRB_WD() 'tablica ID podpisów wręgów dodatnich, rzutnia burta
+	Dim arrWPsiRB_WoP() 'tablica ID podpisów wodnic na początku, rzutnia burta
+	Dim arrWPsiRB_WoK() 'tablica ID podpisów wodnic na końcu, rzutnia burta
+	Dim strWPsiRD 'Warstwa podpisów siatki siatki rzutnia dziób
+	Dim arrWPsiRD_WoP() 'tablica ID podpisów wodnic na początku, rzutnia dziób
+	Dim arrWPsiRD_WoK() 'tablica ID podpisów wodnic na końcu, rzutnia dziób
+	Dim arrWPsiRD_Wz_LB() 'tablica ID podpisów wzdłużnic lewa burta, rzutnia dziób
+	Dim arrWPsiRD_Wz_PB() 'tablica ID podpisów wzdłużnic prawa burta, rzutnia dziób
+	
+	strWPsiRG = Rhino.AddLayer("Podpisy siatki Rzutnia Górna", RGB(128, 128, 128))
+	Call Rhino.CurrentLayer(strWPsiRG)
+	
+	'RZUTNIA GÓRA
+
+	intN = -1
+	ReDim arrTPPP(0)
+	ReDim arrWPsiRG_WU(0)
+	
+	Do While intN < UBound(arrIDWUz)
+		intN = intN + 1
+		ReDim Preserve arrTPPP(intN)
+		ReDim Preserve arrWPsiRG_WU(intN)
+		
+		arrTPPP(intN) = Rhino.CurveStartPoint(arrIDWUz(intN))
+		arrWPsiRG_WU(intN) = Rhino.AddText(arrNWU(intN), arrTPPP(intN), 100,,, 6)
+		Call Rhino.TextObjectPlane(arrWPsiRG_WU(intN), Array(arrTPPP(intN), Array(1, 0, 0), Array(0, 1, 0), Array(0, 0, 1)))
+		Call Rhino.Print("Podpis siatki wręgu ujemnego nr: " & arrNWD(intN) & " / " & arrWPsiRG_WU(intN))
+	Loop
+	
+	intN = 0
+	ReDim arrTPPP(0)
+	ReDim arrWPsiRG_WD(0)
+	
+	Do While intN < UBound(arrIDWDz)
+		intN = intN + 1
+		ReDim Preserve arrTPPP(intN)
+		ReDim Preserve arrWPsiRG_WD(intN)
+		
+		arrTPPP(intN) = Rhino.CurveStartPoint(arrIDWDz(intN))
+		arrWPsiRG_WD(intN) = Rhino.AddText(arrNWD(intN), arrTPPP(intN), 100,,, 6)
+		Call Rhino.TextObjectPlane(arrWPsiRG_WD(intN), Array(arrTPPP(intN), Array(1, 0, 0), Array(0, 1, 0), Array(0, 0, 1)))
+		Call Rhino.Print("Podpis siatki wręgu dodatniego nr: " & arrNWD(intN) & " / " & arrWPsiRG_WD(intN))
+	Loop
+	
+	intN = -1
+	ReDim arrTPPL(0)
+	ReDim arrTPKL(0)
+	ReDim arrWPsiRG_Wz(0)
+	
+	Do While intN < UBound(arrIDLWz)
+		intN = intN + 1
+		ReDim Preserve arrTPPL(intN)
+		ReDim Preserve arrTPKL(intN)
+		ReDim Preserve arrWPsiRG_WzP(intN)
+		ReDim Preserve arrWPsiRG_WzK(intN)
+		
+		arrTPPL(intN) = Rhino.CurveStartPoint(arrIDLWz(intN))
+		arrWPsiRG_WzP(intN) = Rhino.AddText(arrLWz(intN), arrTPPL(intN), 100,,, 2)
+		Call Rhino.TextObjectPlane(arrWPsiRG_WzP(intN), Array(arrTPPL(intN), Array(1, 0, 0), Array(0, 1, 0), Array(0, 0, 1)))
+		Call Rhino.Print("Podpis siatki wzdłużnicy: " & arrLWz(intN) & " od PS na początku/ " & arrWPsiRG_WzP(intN))
+		
+		arrTPKL(intN) = Rhino.CurveEndPoint(arrIDLWz(intN))
+		arrWPsiRG_WzK(intN) = Rhino.AddText(arrLWz(intN), arrTPKL(intN), 100,,, 0)
+		Call Rhino.TextObjectPlane(arrWPsiRG_WzK(intN), Array(arrTPKL(intN), Array(1, 0, 0), Array(0, 1, 0), Array(0, 0, 1)))
+		Call Rhino.Print("Podpis siatki wzdłużnicy: " & arrLWz(intN) & " od PS na końcu/ " & arrWPsiRG_WzK(intN))
+
+	Loop
+	
+	'RZUTNIA BURTA
+	
+	strWPsiRB = Rhino.AddLayer("Podpisy siatki Rzutnia Burta", RGB(128, 128, 128))
+	Call Rhino.CurrentLayer(strWPsiRB)
+	
+	intN = -1
+	ReDim arrTPPP(0)
+	ReDim arrWPsiRB_WU(0)
+	
+	Do While intN < UBound(arrIDWUz)
+		intN = intN + 1
+		ReDim Preserve arrTPPP(intN)
+		ReDim Preserve arrWPsiRB_WU(intN)
+		
+		arrTPPP(intN) = Rhino.CurveStartPoint(arrLSRBWU(intN))
+		arrWPsiRB_WU(intN) = Rhino.AddText(arrNWU(intN), arrTPPP(intN), 100,,, 6)
+		Call Rhino.TextObjectPlane(arrWPsiRB_WU(intN), Array(arrTPPP(intN), Array(1, 0, 0), Array(0, 0, 1), Array(0, -1, 0)))
+		Call Rhino.Print("Podpis siatki wręgu ujemnego nr: " & arrNWD(intN) & " / " & arrWPsiRB_WU(intN))
+	Loop
+	
+	intN = 0
+	ReDim arrTPPP(0)
+	ReDim arrWPsiRB_WD(0)
+	
+	Do While intN < UBound(arrIDWDz)
+		intN = intN + 1
+		ReDim Preserve arrTPPP(intN)
+		ReDim Preserve arrWPsiRB_WD(intN)
+		
+		arrTPPP(intN) = Rhino.CurveStartPoint(arrLSRBWD(intN))
+		arrWPsiRB_WD(intN) = Rhino.AddText(arrNWD(intN), arrTPPP(intN), 100,,, 6)
+		Call Rhino.TextObjectPlane(arrWPsiRB_WD(intN), Array(arrTPPP(intN), Array(1, 0, 0), Array(0, 0, 1), Array(0, -1, 0)))
+		Call Rhino.Print("Podpis siatki wręgu dodatniego nr: " & arrNWD(intN) & " / " & arrWPsiRB_WD(intN))
+	Loop
+	
+	intN = -1
+	ReDim arrWPsiRB_WoP(0)
+	ReDim arrTPPP(0)
+	
+	Do While intN < UBound(arrIDLW)
+		intN = intN + 1
+		ReDim Preserve arrWPsiRB_WoP(intN)
+		ReDim Preserve arrTPPP(intN)
+		
+		arrTPPP(intN) = Rhino.CurveStartPoint(arrIDLW(intN))
+		arrWPsiRB_WoP(intN) = Rhino.AddText(arrLW(intN), arrTPPP(intN), 100,,, 2)
+		Call Rhino.TextObjectPlane(arrWPsiRB_WoP(intN), Array(arrTPPP(intN), Array(1, 0, 0), Array(0, 0, 1), Array(0, -1, 0)))
+		Call Rhino.Print("Podpis siatki linii siatki wodnicy: " & arrLW(intN) & " od PP na początku/ " & arrWPsiRB_WoP(intN))
+		
+	Loop	
+	
+	intN = -1
+	ReDim arrWPsiRB_WoK(0)
+	ReDim arrTPPP(0)
+	
+	Do While intN < UBound(arrIDLW)
+		intN = intN + 1
+		ReDim Preserve arrWPsiRB_WoK(intN)
+		ReDim Preserve arrTPPP(intN)
+		
+		arrTPPP(intN) = Rhino.CurveEndPoint(arrIDLW(intN))
+		arrWPsiRB_WoK(intN) = Rhino.AddText(arrLW(intN), arrTPPP(intN), 100,,, 0)
+		Call Rhino.TextObjectPlane(arrWPsiRB_WoK(intN), Array(arrTPPP(intN), Array(1, 0, 0), Array(0, 0, 1), Array(0, -1, 0)))
+		Call Rhino.Print("Podpis siatki linii siatki wodnicy: " & arrLW(intN) & " od PP na końcu/ " & arrWPsiRB_WoK(intN))
+		
+	Loop
+	
+	'RZUTNIA DZIÓB
+	
+	strWPsiRD = Rhino.AddLayer("Podpisy siatki Rzutnia Dziób", RGB(128, 128, 128))
+	Call Rhino.CurrentLayer(strWPsiRD)
+	
+	intN = -1
+	ReDim arrWPsiRD_WoP(0)
+	ReDim arrTPPP(0)
+	
+	Do While intN < UBound(arrIDLW)
+		intN = intN + 1
+		ReDim Preserve arrWPsiRD_WoP(intN)
+		ReDim Preserve arrTPPP(intN)
+		
+		arrTPPP(intN) = Rhino.CurveStartPoint(arrLSRDB_Poz(intN))
+		arrWPsiRD_WoP(intN) = Rhino.AddText(arrLW(intN), arrTPPP(intN), 100,,, 2)
+		Call Rhino.TextObjectPlane(arrWPsiRD_WoP(intN), Array(arrTPPP(intN), Array(0, -1, 0), Array(0, 0, 1), Array(-1, 0, 0)))
+		Call Rhino.Print("Podpis siatki linii siatki wodnicy: " & arrLW(intN) & " od PP na początku/ " & arrWPsiRD_WoP(intN))
+		
+	Loop	
+	
+	intN = -1
+	ReDim arrWPsiRD_WoK(0)
+	ReDim arrTPPP(0)
+	
+	Do While intN < UBound(arrIDLW)
+		intN = intN + 1
+		ReDim Preserve arrWPsiRD_WoK(intN)
+		ReDim Preserve arrTPPP(intN)
+		
+		arrTPPP(intN) = Rhino.CurveEndPoint(arrLSRDB_Poz(intN))
+		arrWPsiRD_WoK(intN) = Rhino.AddText(arrLW(intN), arrTPPP(intN), 100,,, 0)
+		Call Rhino.TextObjectPlane(arrWPsiRD_WoK(intN), Array(arrTPPP(intN), Array(0, -1, 0), Array(0, 0, 1), Array(-1, 0, 0)))
+		Call Rhino.Print("Podpis siatki linii siatki wodnicy: " & arrLW(intN) & " od PP na końcu/ " & arrWPsiRD_WoK(intN))
+		
+	Loop
+	
+	intN = -1
+	ReDim arrWPsiRD_Wz_LB(0)
+	ReDim arrTPPP(0)
+	
+	Do While intN < UBound(arrIDLWz)
+		intN = intN + 1
+		ReDim Preserve arrWPsiRD_Wz_LB(intN)
+		ReDim Preserve arrTPPP(intN)
+		
+		arrTPPP(intN) = Rhino.CurveStartPoint(arrLSRDB_LB_Pio(intN))
+		arrWPsiRD_Wz_LB(intN) = Rhino.AddText(arrLWz(intN), arrTPPP(intN), 100,,, 8)
+		Call Rhino.TextObjectPlane(arrWPsiRD_Wz_LB(intN), Array(arrTPPP(intN), Array(0, -1, 0), Array(0, 0, 1), Array(-1, 0, 0)))
+		Call Rhino.Print("Podpis siatki linii siatki wzdłużnicy: " & arrLWz(intN) & " od PS/ " & arrWPsiRD_Wz_LB(intN))
+		
+	Loop
+	
+	intN = -1
+	ReDim arrWPsiRD_Wz_PB(0)
+	ReDim arrTPPP(0)
+	
+	Do While intN < UBound(arrIDLWz)
+		intN = intN + 1
+		ReDim Preserve arrWPsiRD_Wz_PB(intN)
+		ReDim Preserve arrTPPP(intN)
+		
+		arrTPPP(intN) = Rhino.CurveStartPoint(arrLSRDB_PB_Pio(intN))
+		arrWPsiRD_Wz_PB(intN) = Rhino.AddText(arrLWz(intN), arrTPPP(intN), 100,,, 6)
+		Call Rhino.TextObjectPlane(arrWPsiRD_Wz_PB(intN), Array(arrTPPP(intN), Array(0, -1, 0), Array(0, 0, 1), Array(-1, 0, 0)))
+		Call Rhino.Print("Podpis siatki linii siatki wzdłużnicy: " & arrLWz(intN) & " od PS/ " & arrWPsiRD_Wz_PB(intN))
+		
+	Loop
+	
+	'------- DODAWANIE KONTURÓW POWIERZCHNI WCHODZĄCYCH W SKŁAD STATKU
+	
+	Dim strKPS_RG 'warstwa kontury powierzchni wchodzących w skład statku, rzutnia góra
+	Dim arrKPS_RG 'kontury powierzchni statku jako obiekty dla rzutni górnej
+	Dim arrP_RG 'płaszczyzna rzutni górnej
+	Dim arrPR_RG 'płaszczyzna rzutowania na rzutnię góra
+	Dim strKPS_RB 'warstwa kontury powierzchni wchodzących w skład statku, rzutnia burta
+	Dim arrKPS_RB 'kontury powierzchni statku jako obiekty dla rzutni burta
+	Dim arrP_RB 'płaszczyzna rzutni burta
+	Dim arrPR_RB 'płaszczyzna rzutowania na rzutnię burta
+	Dim strKPS_RD 'warstwa kontury powierzchni wchodzących w skład statku, rzutnia dziób
+	Dim arrKPS_RD 'kontury powierzchni statku jako obiekty dla rzutni dziób
+	Dim arrP_RD 'płaszczyzna rzutni dziób
+	Dim arrPR_RD 'płaszczyzna rzutowania na rzutnię dziób
+	
+	'RZUTNIA GÓRA, tworzenie konturów
+
+	strKPS_RG = Rhino.AddLayer("Kontury 3D Rzutnia Góra", RGB(255, 255, 0))
+	Call Rhino.CurrentLayer(strKPS_RG)
+	
+	For i=0 To UBound(ArrS)
+		Call Rhino.DuplicateEdgeCurves(arrS(i))
+	Next
+	
+	'rzutowanie
+	
+	arrKPS_RG = Rhino.ObjectsByLayer(strKPS_RG)
+	blnILE = Rhino.IsLayerEmpty(strKPS_RG)
+			
+	If blnILE = 0 Then
+		
+	arrP_RG = Rhino.PlaneFromPoints(arrPR, Array(arrPR(0) + 1, arrPR(1), arrPR(2)), Array(arrPR(0), arrPR(1) + 1, arrPR(2)))
+		arrPR_RG = Rhino.XformPlanarProjection(arrP_RG)
+		Call Rhino.TransformObjects(arrKPS_RG, arrPR_RG, 0)
+		
+	End If
+	
+	'RZUTNIA BURTA, tworzenie konturów
+
+	strKPS_RB = Rhino.AddLayer("Kontury 3D Rzutnia Burta", RGB(255, 255, 0))
+	Call Rhino.CurrentLayer(strKPS_RB)
+	
+	For i=0 To UBound(ArrS)
+		Call Rhino.DuplicateEdgeCurves(arrS(i))
+	Next
+	
+	'rzutowanie
+	
+	arrKPS_RB = Rhino.ObjectsByLayer(strKPS_RB)
+	blnILE = Rhino.IsLayerEmpty(strKPS_RB)
+			
+	If blnILE = 0 Then
+		
+		arrP_RB = Rhino.PlaneFromPoints(Array(arrPR(0), arrPR(1) + dblPDLW, arrPR(2)), Array(arrPR(0) + 1, arrPR(1) + dblPDLW, arrPR(2)), Array(arrPR(0), arrPR(1) + dblPDLW, arrPR(2) + 1))
+		arrPR_RB = Rhino.XformPlanarProjection(arrP_RB)
+		Call Rhino.TransformObjects(arrKPS_RB, arrPR_RB, 0)
+		
+	End If
+	
+	'RZUTNIA DZIÓB, tworzenie konturów
+
+	strKPS_RD = Rhino.AddLayer("Kontury 3D Rzutnia Dziób", RGB(255, 255, 0))
+	Call Rhino.CurrentLayer(strKPS_RD)
+	
+	For i=0 To UBound(ArrS)
+		Call Rhino.DuplicateEdgeCurves(arrS(i))
+	Next
+	
+	'rzutowanie
+	
+	arrKPS_RD = Rhino.ObjectsByLayer(strKPS_RD)
+	blnILE = Rhino.IsLayerEmpty(strKPS_RD)
+			
+	If blnILE = 0 Then
+		
+		arrP_RD = Rhino.PlaneFromPoints(arrPSMWD, Array(arrPSMWD(0), arrPSMWD(1) - 1, arrPSMWD(2)), Array(arrPSMWD(0), arrPSMWD(1), arrPSMWD(2) + 1))
+		arrPR_RD = Rhino.XformPlanarProjection(arrP_RD)
+		Call Rhino.TransformObjects(arrKPS_RD, arrPR_RD, 0)
+		Call Rhino.RotateObjects(arrKPS_RD, arrPSMWD, 180, Array(0, 0, 1), 1)
+		
+	End If	
+	
+	'------- OBRÓT RZUTNI BURTA i ROZSUNIĘCIE
+	
+	Dim arrRB_Wz 'wzdłużnice burta
+	Dim arrWsiRB 'linie siatki rzutnia burta
+	Dim arrWPsiRB 'podpisy linii siatki rzutnia burta
+	
+	ReDim arrRB_Wz(0)
+	intN = -1
+	
+	Do While intN < UBound(arrWz)	
+
+		intN = intN + 1
+		arrRB_Wz = Rhino.ObjectsByLayer(arrWz(intN))
+		blnILE = Rhino.IsLayerEmpty(arrWz(intN))
+		If blnILE = 0 Then
+			Call Rhino.RotateObjects(arrRB_Wz, Array(arrPR(0), arrPR(1) + dblPDLW, arrPR(2)), -90, Array(1, 0, 0))
+			Call Rhino.MoveObjects(arrRB_Wz, Array(0, 0, 0), Array(0, 1000, 0))
+		End If
+	Loop
+	
+	arrWsiRB = Rhino.ObjectsByLayer(strWsiRB)
+	blnILE = Rhino.IsLayerEmpty(strWsiRB)
+			
+	If blnILE = 0 Then
+		Call Rhino.RotateObjects(arrWsiRB, WR0pk, -90, Array(1, 0, 0), 0)
+		Call Rhino.MoveObjects(arrWsiRB, Array(0, 0, 0), Array(0, 1000, 0))
+	End If
+	
+	arrWPsiRB = Rhino.ObjectsByLayer(strWPsiRB)
+	blnILE = Rhino.IsLayerEmpty(strWPsiRB)
+			
+	If blnILE = 0 Then
+		Call Rhino.RotateObjects(arrWPsiRB, WR0pk, -90, Array(1, 0, 0), 0)
+		Call Rhino.MoveObjects(arrWPsiRB, Array(0, 0, 0), Array(0, 1000, 0))
+	End If	
+	
+	arrKPS_RB = Rhino.ObjectsByLayer(strKPS_RB)
+	blnILE = Rhino.IsLayerEmpty(strKPS_RB)
+			
+	If blnILE = 0 Then
+		Call Rhino.RotateObjects(arrKPS_RB, WR0pk, -90, Array(1, 0, 0), 0)
+		Call Rhino.MoveObjects(arrKPS_RB, Array(0, 0, 0), Array(0, 1000, 0))
+	End If	
+	
+	'------- OBRÓT RZUTNI DZIÓB i ROZSUNIĘCIE
+	
+	Dim arrRD_WrgU 'wręgownice ujemne dziób
+	Dim arrRD_WrgD 'wręgownice dodatnie dziób
+	Dim arrWsiRD 'linie siatki rzutnia dziób
+	Dim arrWPsiRD 'podpisy linii siatki rzutnia dziób
+	
+	intN = -1
+	
+	If UBound(arrIDWUz) > 0 Then
+	Do While intN < UBound(arrWrgU)	
+
+		intN = intN + 1
+		arrRD_WrgU = Rhino.ObjectsByLayer(arrWrgU(intN))
+		blnILE = Rhino.IsLayerEmpty(arrWrgU(intN))
+		If blnILE = 0 Then
+			Call Rhino.RotateObjects(arrRD_WrgU, Array(arrPSMWD(0), arrPSMWD(1) + dblPDLW, arrPSMWD(2)), 90, Array(0, 1, 0))
+			Call Rhino.RotateObjects(arrRD_WrgU, Array(arrPSMWD(0), arrPSMWD(1) + dblPDLW, arrPSMWD(2)), 90, Array(0, 0, 1))
+			Call Rhino.MoveObjects(arrRD_WrgU, Array(0, 0, 0), Array(1000, 1000, 0))
+		End If
+	Loop	
+	End If
+		
+	intN = -1
+	
+	Do While intN < UBound(arrWrgD)	
+
+		intN = intN + 1
+		arrRD_WrgD = Rhino.ObjectsByLayer(arrWrgD(intN))
+		blnILE = Rhino.IsLayerEmpty(arrWrgD(intN))
+		If blnILE = 0 Then
+			Call Rhino.RotateObjects(arrRD_WrgD, Array(arrPSMWD(0), arrPSMWD(1) + dblPDLW, arrPSMWD(2)), 90, Array(0, 1, 0))
+			Call Rhino.RotateObjects(arrRD_WrgD, Array(arrPSMWD(0), arrPSMWD(1) + dblPDLW, arrPSMWD(2)), 90, Array(0, 0, 1))
+			Call Rhino.MoveObjects(arrRD_WrgD, Array(0, 0, 0), Array(1000, 1000, 0))
+		End If
+	Loop
+	
+	arrWsiRD = Rhino.ObjectsByLayer(strWsiDB)
+	blnILE = Rhino.IsLayerEmpty(strWsiDB)
+			
+	If blnILE = 0 Then
+		Call Rhino.RotateObjects(arrWsiRD, Array(arrPSMWD(0), arrPSMWD(1) + dblPDLW, arrPSMWD(2)), 90, Array(0, 1, 0))
+		Call Rhino.RotateObjects(arrWsiRD, Array(arrPSMWD(0), arrPSMWD(1) + dblPDLW, arrPSMWD(2)), 90, Array(0, 0, 1))
+		Call Rhino.MoveObjects(arrWsiRD, Array(0, 0, 0), Array(1000, 1000, 0))
+	End If
+	
+	arrWPsiRD = Rhino.ObjectsByLayer(strWPsiRD)
+	blnILE = Rhino.IsLayerEmpty(strWPsiRD)
+			
+	If blnILE = 0 Then
+		Call Rhino.RotateObjects(arrWPsiRD, Array(arrPSMWD(0), arrPSMWD(1) + dblPDLW, arrPSMWD(2)), 90, Array(0, 1, 0))
+		Call Rhino.RotateObjects(arrWPsiRD, Array(arrPSMWD(0), arrPSMWD(1) + dblPDLW, arrPSMWD(2)), 90, Array(0, 0, 1))
+		Call Rhino.MoveObjects(arrWPsiRD, Array(0, 0, 0), Array(1000, 1000, 0))
+	End If	
+	
+	arrKPS_RD = Rhino.ObjectsByLayer(strKPS_RD)
+	blnILE = Rhino.IsLayerEmpty(strKPS_RD)
+			
+	If blnILE = 0 Then
+		Call Rhino.RotateObjects(arrKPS_RD, Array(arrPSMWD(0), arrPSMWD(1) + dblPDLW, arrPSMWD(2)), 90, Array(0, 1, 0))
+		Call Rhino.RotateObjects(arrKPS_RD, Array(arrPSMWD(0), arrPSMWD(1) + dblPDLW, arrPSMWD(2)), 90, Array(0, 0, 1))
+		Call Rhino.MoveObjects(arrKPS_RD, Array(0, 0, 0), Array(1000, 1000, 0))
+	End If	
+	
+	'------- WŁĄCZANIE ODŚWIEŻANIA EKRANU
+	
+	Call Rhino.EnableRedraw(1)
+	
+End Sub
